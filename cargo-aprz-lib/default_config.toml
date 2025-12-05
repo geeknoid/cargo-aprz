@@ -1,0 +1,274 @@
+# ============================================================================
+# cargo-aprz Configuration File
+# ============================================================================
+#
+# This file controls how cargo-aprz evaluates crates and reports their metrics.
+#
+# Visit https://github.com/geeknoid/cargo-aprz for more information
+#
+# ----------------------------------------------------------------------------
+# How It Works
+# ----------------------------------------------------------------------------
+#
+# 1. METRICS COLLECTION: cargo-aprz gathers data about each crate from
+#    crates.io and GitHub (downloads, owners, commits, issues, etc.)
+#
+# 2. METRIC REPORTING: All metrics are displayed in reports (console, HTML, Excel)
+#
+# 3. OPTIONAL RANKING: When the --rank flag is used, expressions can be evaluated
+#    to determine if a crate should be ACCEPTED, DENIED, or NOT EVALUATED
+#
+# ----------------------------------------------------------------------------
+# Expression-Based Ranking (Optional)
+# ----------------------------------------------------------------------------
+#
+# When using the --rank flag, you can define expressions to evaluate crate metrics:
+#
+# deny_if_any: If ANY expression evaluates to true, the crate is DENIED
+# accept_if_any: If ANY expression evaluates to true, the crate is ACCEPTED
+# accept_if_all: If ALL expressions evaluate to true, the crate is ACCEPTED
+#
+# Expressions use hierarchical dot-notation metric names and standard comparison operators.
+#
+# ----------------------------------------------------------------------------
+# Available Metrics
+# ----------------------------------------------------------------------------
+#
+# Metadata:
+#   crate.name - Name of the crate
+#   crate.version - Semantic version of the crate
+#   crate.description - Description of the crate's purpose and use
+#   crate.license - SPDX license identifier constraining use of the crate
+#   crate.categories - Crate categories
+#   crate.keywords - Crate keywords
+#   crate.features - Available crate features
+#   crate.repository - URL to the crate's source code repository
+#   crate.homepage - URL to the crate's homepage
+#   crate.minimum_rust - Minimum Rust version (MSRV) required to compile this crate
+#   crate.rust_edition - Rust edition this crate targets
+#
+# Documentation:
+#   docs.documentation - URL to the crate's documentation
+#   docs.public_api_elements - Number of public API elements (functions, structs, etc.)
+#   docs.undocumented_public_api_elements - Number of public API elements without documentation
+#   docs.public_api_coverage_percentage - Percentage of public API elements with documentation
+#   docs.crate_level_docs_present - Whether crate-level documentation exists
+#   docs.broken_links - Number of broken links in documentation
+#   docs.examples_in_docs - Number of code examples in documentation
+#   docs.standalone_examples - Number of standalone example programs in the codebase
+#
+# Usage:
+#   usage.total_downloads - Crate downloads across all versions
+#   usage.total_downloads_last_90_days - Crate downloads across all versions in the last 90 days
+#   usage.version_downloads - Crate downloads of this specific version
+#   usage.version_downloads_last_90_days - Crate downloads of this specific version in the last 90 days
+#   usage.dependent_crates - Number of unique crates that depend on this crate
+#
+# Stability:
+#   stability.crate_created_at - When the crate was first published to crates.io
+#   stability.crate_updated_at - When the crate's metadata was last updated on crates.io
+#   stability.version_created_at - When this version was first published to crates.io
+#   stability.version_updated_at - When this version's metadata was last updated on crates.io
+#   stability.yanked - Whether this version has been yanked from crates.io
+#   stability.versions_last_90_days - Number of versions published in the last 90 days
+#
+# Ownership:
+#   owners.names - List of owner usernames
+#
+# Community:
+#   community.repo_stars - Number of stars on the repository
+#   community.repo_forks - Number of forks of the repository
+#   community.repo_subscribers - Number of users watching/subscribing to the repository
+#   community.repo_contributors - Number of contributors to the repository
+#
+# Activity:
+#   activity::commits_last_90_days - Number of commits to the repository in the last 90 days
+#   activity.open_issues - Number of currently open issues
+#   activity.closed_issues - Total number of issues that have been closed (all time)
+#   activity.avg_open_issue_age_days - Average age in days of open issues
+#   activity.median_open_issue_age_days - Median age in days of open issues (50th percentile)
+#   activity.p90_open_issue_age_days - 90th percentile age in days of open issues
+#   activity.open_pull_requests - Number of currently open pull requests
+#   activity.closed_pull_requests - Total number of pull requests that have been closed (all time)
+#   activity.avg_open_pull_request_age_days - Average age in days of open pull requests
+#   activity.median_open_pull_request_age_days - Median age in days of open pull requests (50th percentile)
+#   activity.p90_open_pull_request_age_days - 90th percentile age in days of open pull requests
+#
+# Advisories:
+#   advisories.total_low_severity_vulnerabilities - Number of low severity vulnerabilities across all versions
+#   advisories.total_medium_severity_vulnerabilities - Number of medium severity vulnerabilities across all versions
+#   advisories.total_high_severity_vulnerabilities - Number of high severity vulnerabilities across all versions
+#   advisories.total_critical_severity_vulnerabilities - Number of critical severity vulnerabilities across all versions
+#   advisories.total_notice_warnings - Number of notice warnings across all versions
+#   advisories.total_unmaintained_warnings - Number of unmaintained warnings across all versions
+#   advisories.total_unsound_warnings - Number of unsound warnings across all versions
+#   advisories.version_low_severity_vulnerabilities - Number of low severity vulnerabilities in this version
+#   advisories.version_medium_severity_vulnerabilities - Number of medium severity vulnerabilities in this version
+#   advisories.version_high_severity_vulnerabilities - Number of high severity vulnerabilities in this version
+#   advisories.version_critical_severity_vulnerabilities - Number of critical severity vulnerabilities in this version
+#   advisories.version_notice_warnings - Number of notice warnings for this version
+#   advisories.version_unmaintained_warnings - Number of unmaintained warnings for this version
+#   advisories.version_unsound_warnings - Number of unsound warnings for this version
+#
+# Code:
+#   code.source_files - Number of source files
+#   code.source_files_with_errors - Number of source files that had analysis errors
+#   code.code_lines - Number of lines of production code (excluding tests)
+#   code.test_lines - Number of lines of test code
+#   code.comment_lines - Number of comment lines in the codebase
+#   code.transitive_dependencies - Number of transitive dependencies
+#
+# Trustworthiness:
+#   trust.unsafe_blocks - Number of unsafe blocks in the codebase
+#   trust.ci_workflows - Whether CI/CD workflows were detected in the repository
+#   trust.miri_usage - Whether Miri is used in CI
+#   trust.clippy_usage - Whether Clippy is used in CI
+#   trust.code_coverage_percentage - Percentage of code covered by tests
+#
+# Special Variables:
+#   - now: Current timestamp for date arithmetic
+#     Example: now - crate.created_at > duration("90d")
+#
+# Working with Lists:
+#   CEL provides built-in list operations:
+#   - size(list): Get the length of a list
+#   - list.exists(x, condition): Check if any element matches a condition
+#   - "item" in list: Check if an item is in the list
+#   Examples:
+#     "async" in crate.keywords
+#     size(crate.keywords) > 3
+#     owners.names.exists(o, o == "rust-lang-owner")
+#
+# Handling Missing Data:
+# Some data sources may be unavailable (e.g., no repository, no coverage data).
+# Use the has.* boolean flags to check if data is available:
+#   - has.hosting_data: Whether GitHub/GitLab repository data is available
+#   - has.advisory_data: Whether security advisory data is available
+#   - has.codebase_data: Whether codebase analysis data is available
+#   - has.coverage_data: Whether code coverage data is available
+#   - has.docs_data: Whether documentation metrics are available
+#
+# Example expressions:
+#
+# [[deny_if_any]]
+# name = "high_vulnerability"
+# description = "Deny if critical vulnerabilities exist"
+# expression = "advisory.current.critical > 0"
+#
+# [[deny_if_any]]
+# name = "unmaintained"
+# description = "Deny if flagged as unmaintained"
+# expression = "advisory.current.unmaintained > 0"
+#
+# [[accept_if_any]]
+# name = "highly_popular"
+# description = "Accept if very popular"
+# expression = "crate.downloads_last_month > 100000 && hosting.stars > 1000"
+#
+# [[accept_if_all]]
+# name = "good_coverage"
+# description = "Must have good test coverage"
+# expression = "coverage.percentage >= 80.0"
+#
+# [[accept_if_all]]
+# name = "no_vulnerabilities"
+# description = "Must have no vulnerabilities"
+# expression = "advisory.current.vulnerabilities == 0"
+#
+# Examples with missing data handling:
+#
+# [[accept_if_all]]
+# name = "coverage_ok"
+# description = "Accept if no coverage data, or if coverage is good"
+# expression = "!has.coverage_data || coverage.percentage >= 80.0"
+#
+# [[accept_if_all]]
+# name = "require_repository"
+# description = "Must have repository data to evaluate stars"
+# expression = "has.hosting_data && hosting.stars >= 100"
+#
+# Examples using list operations:
+#
+# [[accept_if_any]]
+# name = "async_keyword"
+# description = "Accept if crate has 'async' keyword"
+# expression = '"async" in crate.keywords'
+#
+# [[deny_if_any]]
+# name = "web_category"
+# description = "Deny if in web-programming category"
+# expression = '"web-programming" in crate.categories'
+#
+# [[accept_if_any]]
+# name = "trusted_owner"
+# description = "Accept if owned by specific trusted user"
+# expression = '"rust-lang-owner" in owners.names'
+#
+# [[accept_if_any]]
+# name = "async_and_popular"
+# description = "Must be async-related and popular"
+# expression = '"async" in crate.keywords && community.repo_stars > 500'
+#
+# [[accept_if_any]]
+# name = "many_keywords"
+# description = "Accept if crate has many keywords"
+# expression = 'size(crate.keywords) >= 5'
+#
+# Examples using date arithmetic with "now":
+#
+# [[accept_if_any]]
+# name = "recently_updated"
+# description = "Accept if updated within the last 90 days"
+# expression = 'now - stability.crate_updated_at < duration("90d")'
+#
+# [[deny_if_any]]
+# name = "stale_crate"
+# description = "Deny if not updated in over a year"
+# expression = 'now - stability.crate_updated_at > duration("365d")'
+#
+# [[deny_if_any]]
+# name = "very_old_crate"
+# description = "Deny if crate was created more than 10 years ago"
+# expression = 'now - stability.crate_created_at > duration("3650d")'
+
+# Expressions that if ANY evaluate to true, the crate is denied
+deny_if_any = []
+
+# Expressions that if ANY evaluate to true, the crate is accepted
+[[accept_if_any]]
+name = "highly_popular"
+description = "Accept if very popular"
+expression = "usage.total_downloads_last_90_days > 10000 && community.repo_stars > 1000"
+
+[[accept_if_any]]
+name = "extremely_popular"
+description = "Accept if very popular"
+expression = "usage.total_downloads_last_90_days > 100000 && community.repo_stars > 10000"
+
+# Expressions that must ALL evaluate to true for the crate to be accepted
+accept_if_all = []
+
+# ----------------------------------------------------------------------------
+# Cache Configuration
+# ----------------------------------------------------------------------------
+# Control how long cached data is retained before being refreshed
+# Durations can be specified using human-readable formats like:
+# - "1 week", "2 weeks", etc.
+# - "7 days", "30 days", etc.
+# - "24 hours", "48 hours", etc.
+# - Or combinations: "1 week 2 days"
+
+# Duration to keep crates.io cache data before re-downloading
+crates_cache_ttl = "1 week"
+
+# Duration to keep hosting (GitHub/GitLab) cache data before re-fetching
+hosting_cache_ttl = "1 week"
+
+# Duration to keep cached codebase before re-fetching
+codebase_cache_ttl = "1 week"
+
+# Duration to keep cached coverage data before re-fetching
+coverage_cache_ttl = "1 week"
+
+# Duration to keep the advisory database cached before re-downloading
+advisories_cache_ttl = "1 week"
