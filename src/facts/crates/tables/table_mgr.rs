@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use core::time::Duration;
 use flate2::bufread::GzDecoder;
 use futures_util::StreamExt;
-use ohno::{IntoAppError, app_err, bail};
+use ohno::{EnrichableExt, IntoAppError, app_err, bail};
 use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::{BufRead, Error as IoError, Read};
@@ -275,7 +275,7 @@ impl TableMgr {
 
         match prep_tables(source, tables_root, max_ttl, progress).await {
             Ok(table_mgr) => Ok(table_mgr),
-            Err(e) => Err(e).into_app_err_with(|| "could not prepare crates.io tables"),
+            Err(e) => Err(e.enrich("could not prepare crates.io tables")),
         }
     }
 
@@ -400,7 +400,7 @@ async fn prep_tables(source: &Url, tables_root: impl AsRef<Path>, max_ttl: Durat
                 }
             }
             Err(e) => {
-                let _ = tx.send(Err(ohno::app_err!("download failed: {e}"))).await;
+                let _ = tx.send(Err(ohno::AppError::new(e))).await;
                 break;
             }
         }
