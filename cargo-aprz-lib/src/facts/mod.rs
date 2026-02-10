@@ -22,6 +22,9 @@
 //! document-based caching (for raw API responses) and lock-based caching (for parsed
 //! facts) to minimize redundant work and API calls.
 
+#[cfg(debug_assertions)]
+pub mod advisories;
+#[cfg(not(debug_assertions))]
 pub(crate) mod advisories;
 mod cache_doc;
 mod cache_lock;
