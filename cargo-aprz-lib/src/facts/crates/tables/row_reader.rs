@@ -59,8 +59,8 @@ impl<'a> RowReader<'a> {
 
     pub fn read_date(&mut self) -> NaiveDate {
         let days = self.read_u64();
-        let days = i32::try_from(days).expect("date in range");
-        NaiveDate::from_epoch_days(days).expect("valid date")
+        let days = i32::try_from(days).unwrap_or(0);
+        NaiveDate::from_epoch_days(days).unwrap_or(NaiveDate::default())
     }
 
     pub fn read_version(&mut self) -> Version {

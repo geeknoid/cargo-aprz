@@ -12,7 +12,8 @@ use core::time::Duration;
 use futures_util::future::join_all;
 use ohno::{EnrichableExt, IntoAppError};
 use reqwest::header::LINK;
-use serde::de::IgnoredAny;
+use serde::de::{IgnoredAny, SeqAccess, Visitor};
+use serde::Deserializer as _;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
@@ -551,8 +552,28 @@ impl Provider {
 
 /// Count elements in a JSON array without allocating parsed values.
 fn count_json_array_elements(json: &[u8]) -> Result<u64> {
-    let array: Vec<IgnoredAny> = serde_json::from_slice(json).into_app_err("malformed JSON while counting array elements")?;
-    Ok(array.len() as u64)
+    struct CountVisitor;
+
+    impl<'de> Visitor<'de> for CountVisitor {
+        type Value = u64;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a JSON array")
+        }
+
+        fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> std::result::Result<u64, A::Error> {
+            let mut count = 0u64;
+            while seq.next_element::<IgnoredAny>()?.is_some() {
+                count += 1;
+            }
+            Ok(count)
+        }
+    }
+
+    let mut deserializer = serde_json::Deserializer::from_slice(json);
+    deserializer
+        .deserialize_seq(CountVisitor)
+        .into_app_err("malformed JSON while counting array elements")
 }
 
 #[expect(clippy::cast_precision_loss, reason = "it happens")]

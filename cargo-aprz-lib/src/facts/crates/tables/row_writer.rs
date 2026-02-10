@@ -181,7 +181,7 @@ fn parse_pg_timestamp(s: &str) -> Result<u64> {
         .or_else(|_| DateTime::parse_from_rfc3339(s))
         .into_app_err_with(|| format!("unable to parse timestamp '{s}'"))?
         .with_timezone(&Utc);
-    Ok(dt.timestamp().cast_unsigned())
+    Ok(dt.timestamp().max(0).cast_unsigned())
 }
 
 fn parse_pg_date(s: &str) -> Result<u64> {
@@ -189,6 +189,7 @@ fn parse_pg_date(s: &str) -> Result<u64> {
         chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
             .into_app_err_with(|| format!("unable to parse date '{s}'"))?
             .to_epoch_days()
+            .max(0)
             .cast_unsigned(),
     ))
 }

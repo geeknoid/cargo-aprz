@@ -93,7 +93,7 @@ pub trait Table: Sized {
         }
 
         let count = row_writer.row_count();
-        let timestamp = now.timestamp().cast_unsigned();
+        let timestamp = now.timestamp().max(0).cast_unsigned();
 
         // padding to ensure vlen never tries to read past EOF
         buf_writer.write_all(&[0u8; 10])?;
@@ -304,7 +304,7 @@ pub fn validate_table_header(mmap: &Mmap, max_ttl: Duration, now: DateTime<Utc>)
     let table_timestamp = u64::from_le_bytes(timestamp_bytes);
 
     // Check TTL
-    let now_secs = now.timestamp().cast_unsigned();
+    let now_secs = now.timestamp().max(0).cast_unsigned();
     let age_seconds = now_secs.saturating_sub(table_timestamp);
     let age = Duration::from_secs(age_seconds);
 
