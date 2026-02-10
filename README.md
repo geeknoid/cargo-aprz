@@ -216,7 +216,7 @@ In addition to the metrics, you can also use the `now` variable in expressions t
 [[accept_if_all]]
 name = "Established Crate"
 description = "Accepts if a crate is older than 6 months."
-expression = "stability.version_created_at < (now - duration('180d'))"
+expression = "stability.version_created_at < (now - duration('4320h'))"  # 4320 hours = 180 days
 ```
 
 ### Expression Checks in CI
