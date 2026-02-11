@@ -9,21 +9,27 @@ use std::collections::{HashMap, HashSet};
 /// `DateTime` values are formatted as date-only (YYYY-MM-DD) for readability.
 /// `List` values are formatted as comma-separated strings.
 pub fn format_metric_value(value: &MetricValue) -> String {
+    let mut buf = String::new();
+    write_metric_value(&mut buf, value);
+    buf
+}
+
+/// Write a metric value into the given buffer.
+pub fn write_metric_value(buf: &mut String, value: &MetricValue) {
+    use core::fmt::Write;
     match value {
-        MetricValue::UInt(u) => u.to_string(),
-        MetricValue::Float(f) => format!("{f:.2}"),
-        MetricValue::Boolean(b) => b.to_string(),
-        MetricValue::String(s) => s.to_string(),
-        MetricValue::DateTime(dt) => dt.format("%Y-%m-%d").to_string(),
+        MetricValue::UInt(u) => { let _ = write!(buf, "{u}"); }
+        MetricValue::Float(f) => { let _ = write!(buf, "{f:.2}"); }
+        MetricValue::Boolean(b) => { let _ = write!(buf, "{b}"); }
+        MetricValue::String(s) => buf.push_str(s),
+        MetricValue::DateTime(dt) => { let _ = write!(buf, "{}", dt.format("%Y-%m-%d")); }
         MetricValue::List(values) => {
-            let mut result = String::new();
             for (i, value) in values.iter().enumerate() {
                 if i > 0 {
-                    result.push_str(", ");
+                    buf.push_str(", ");
                 }
-                result.push_str(&format_metric_value(value));
+                write_metric_value(buf, value);
             }
-            result
         }
     }
 }

@@ -56,6 +56,7 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<
     }
 
     // Write metrics grouped by category
+    let mut metric_buf = String::new();
     for category in MetricCategory::iter() {
         if let Some(category_metrics) = metrics_by_category.get(&category) {
             // Write each metric in this category
@@ -67,7 +68,9 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<
                     if let Some(metric) = metric_map.get(metric_name)
                         && let Some(ref value) = metric.value
                     {
-                        write!(writer, ",{}", escape_csv(&common::format_metric_value(value)))?;
+                        metric_buf.clear();
+                        common::write_metric_value(&mut metric_buf, value);
+                        write!(writer, ",{}", escape_csv(&metric_buf))?;
                     } else {
                         write!(writer, ",")?;
                     }

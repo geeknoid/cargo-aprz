@@ -78,14 +78,13 @@ pub async fn process_dependencies<H: Host>(host: &mut H, args: &DepsArgs) -> Res
 
     // Validate package names if specified
     if !args.package.is_empty() {
-        let workspace_packages: Vec<_> = metadata
-            .workspace_members
-            .iter()
-            .filter_map(|id| all_packages.get(id).map(|p| &p.name))
-            .collect();
-
         for pkg_name in &args.package {
-            if !workspace_packages.iter().any(|&name| name == pkg_name) {
+            let found = metadata
+                .workspace_members
+                .iter()
+                .filter_map(|id| all_packages.get(id).map(|p| &p.name))
+                .any(|name| name == pkg_name);
+            if !found {
                 bail!("package '{pkg_name}' not found in workspace");
             }
         }

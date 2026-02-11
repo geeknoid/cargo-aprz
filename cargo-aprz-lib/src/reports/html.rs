@@ -263,11 +263,8 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], timestamp: DateTime<Local>
     writeln!(writer, "    </button>")?;
     writeln!(writer, "  </div>")?;
 
-    // Collect metrics for each crate
-    let crate_metrics: Vec<&[Metric]> = crates.iter().map(|c| c.metrics.as_slice()).collect();
-
     // Group metrics by category across all crates
-    let metrics_by_category = common::group_all_metrics_by_category(crate_metrics.iter().copied());
+    let metrics_by_category = common::group_all_metrics_by_category(crates.iter().map(|c| c.metrics.as_slice()));
 
     writeln!(writer, "  <div class=\"table-wrapper\">")?;
     writeln!(writer, "    <div class=\"table-container\">")?;
@@ -340,9 +337,9 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], timestamp: DateTime<Local>
     let mut is_first_category = true;
 
     // Build per-crate metric lookup maps for O(1) access in the inner loop
-    let crate_metric_maps: Vec<HashMap<&str, &Metric>> = crate_metrics
+    let crate_metric_maps: Vec<HashMap<&str, &Metric>> = crates
         .iter()
-        .map(|metrics| metrics.iter().map(|m| (m.name(), m)).collect())
+        .map(|c| c.metrics.iter().map(|m| (m.name(), m)).collect())
         .collect();
 
     for category in MetricCategory::iter() {
@@ -370,6 +367,8 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], timestamp: DateTime<Local>
             writeln!(writer, "          </tr>")?;
 
             // Metric rows for this category
+            let mut tooltip_buf = String::new();
+            let mut metric_buf = String::new();
             for &metric_name in category_metrics {
                 writeln!(writer, "          <tr class=\"metric-row\">")?;
 
@@ -390,28 +389,31 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], timestamp: DateTime<Local>
                 for (crate_index, metric_map) in crate_metric_maps.iter().enumerate() {
                     let metric = metric_map.get(metric_name);
                     let crate_info = &crates[crate_index];
-                    let tooltip = format!("{} v{}\n{metric_name}\n{description}", crate_info.name, crate_info.version);
 
-                    write!(writer, "            <td title=\"{}\"", html_escape(&tooltip))?;
+                    tooltip_buf.clear();
+                    let _ = write!(tooltip_buf, "{} v{}\n{metric_name}\n{description}", crate_info.name, crate_info.version);
+
+                    write!(writer, "            <td title=\"{}\"", html_escape(&tooltip_buf))?;
                     write!(writer, ">")?;
                     if let Some(m) = metric {
                         if let Some(value) = &m.value {
-                            let formatted = common::format_metric_value(value);
+                            metric_buf.clear();
+                            common::write_metric_value(&mut metric_buf, value);
 
                             // Special handling for keywords and categories
                             if common::is_keywords_metric(metric_name) {
-                                format_keywords_or_categories(&formatted, "keywords", writer)?;
+                                format_keywords_or_categories(&metric_buf, "keywords", writer)?;
                             } else if common::is_categories_metric(metric_name) {
-                                format_keywords_or_categories(&formatted, "categories", writer)?;
-                            } else if common::is_url(&formatted) {
+                                format_keywords_or_categories(&metric_buf, "categories", writer)?;
+                            } else if common::is_url(&metric_buf) {
                                 write!(
                                     writer,
                                     "<a href=\"{}\" target=\"_blank\" rel=\"noopener noreferrer\">{}</a>",
-                                    html_escape(&formatted),
-                                    html_escape(&formatted)
+                                    html_escape(&metric_buf),
+                                    html_escape(&metric_buf)
                                 )?;
                             } else {
-                                write!(writer, "{}", html_escape(&formatted))?;
+                                write!(writer, "{}", html_escape(&metric_buf))?;
                             }
                         } else {
                             write!(writer, "<span class=\"na\">n/a</span>")?;

@@ -7,34 +7,35 @@ use serde_json::json;
 #[expect(unused_results, reason = "HashMap::insert intentionally overwrites values")]
 pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<()> {
     let mut crate_data = Vec::with_capacity(crates.len());
+    let mut buf = String::new();
 
     for crate_info in crates {
         let mut crate_obj = serde_json::Map::new();
-        crate_obj.insert("name".to_string(), json!(crate_info.name));
-        crate_obj.insert("version".to_string(), json!(crate_info.version.to_string()));
+        crate_obj.insert("name".into(), json!(crate_info.name));
+        crate_obj.insert("version".into(), json!(crate_info.version.to_string()));
 
         if let Some(appraisal) = &crate_info.appraisal {
             let mut eval_obj = serde_json::Map::new();
-            eval_obj.insert("result".to_string(), json!(common::format_risk_status(appraisal.risk)));
-            eval_obj.insert("reasons".to_string(), json!(appraisal.expression_outcomes.iter().map(|o| {
+            eval_obj.insert("result".into(), json!(common::format_risk_status(appraisal.risk)));
+            eval_obj.insert("reasons".into(), json!(appraisal.expression_outcomes.iter().map(|o| {
                 if o.result {
                     format!("✔️{}", o.name)
                 } else {
                     format!("🗙{}", o.name)
                 }
             }).collect::<Vec<_>>()));
-            crate_obj.insert("appraisal".to_string(), json!(eval_obj));
+            crate_obj.insert("appraisal".into(), json!(eval_obj));
         }
 
         let mut metrics_obj = serde_json::Map::new();
         for metric in &crate_info.metrics {
             if let Some(ref value) = metric.value {
-                let json_value = metric_value_to_json(value);
-                metrics_obj.insert(metric.name().to_string(), json_value);
+                let json_value = metric_value_to_json(value, &mut buf);
+                metrics_obj.insert(metric.name().into(), json_value);
             }
         }
 
-        crate_obj.insert("metrics".to_string(), json!(metrics_obj));
+        crate_obj.insert("metrics".into(), json!(metrics_obj));
         crate_data.push(json!(crate_obj));
     }
 
@@ -46,16 +47,19 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<
     Ok(())
 }
 
-fn metric_value_to_json(value: &MetricValue) -> serde_json::Value {
+fn metric_value_to_json(value: &MetricValue, buf: &mut String) -> serde_json::Value {
     match value {
         MetricValue::UInt(u) => json!(u),
         MetricValue::Float(f) => json!(f),
         MetricValue::Boolean(b) => json!(b),
         MetricValue::String(s) => json!(s.as_str()),
-        MetricValue::DateTime(dt) => json!(dt.format("%Y-%m-%d").to_string()),
+        MetricValue::DateTime(_) => {
+            buf.clear();
+            common::write_metric_value(buf, value);
+            json!(buf.as_str())
+        }
         MetricValue::List(values) => {
-            // Convert list to JSON array, recursively converting each element
-            json!(values.iter().map(metric_value_to_json).collect::<Vec<_>>())
+            json!(values.iter().map(|v| metric_value_to_json(v, buf)).collect::<Vec<_>>())
         }
     }
 }
@@ -95,21 +99,21 @@ mod tests {
     #[test]
     fn test_metric_value_to_json_float() {
         let value = MetricValue::Float(1.234);
-        let json = metric_value_to_json(&value);
+        let json = metric_value_to_json(&value, &mut String::new());
         assert_eq!(json, json!(1.234));
     }
 
     #[test]
     fn test_metric_value_to_json_boolean() {
         let value = MetricValue::Boolean(true);
-        let json = metric_value_to_json(&value);
+        let json = metric_value_to_json(&value, &mut String::new());
         assert_eq!(json, json!(true));
     }
 
     #[test]
     fn test_metric_value_to_json_text() {
         let value = MetricValue::String("hello".into());
-        let json = metric_value_to_json(&value);
+        let json = metric_value_to_json(&value, &mut String::new());
         assert_eq!(json, json!("hello"));
     }
 
@@ -118,7 +122,7 @@ mod tests {
         let dt = DateTime::parse_from_rfc3339("2024-01-15T10:30:00Z").unwrap();
         let dt_utc: DateTime<Utc> = dt.into();
         let value = MetricValue::DateTime(dt_utc);
-        let json = metric_value_to_json(&value);
+        let json = metric_value_to_json(&value, &mut String::new());
         assert!(json.as_str().unwrap().contains("2024-01-15"));
     }
 

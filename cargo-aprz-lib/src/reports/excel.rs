@@ -47,17 +47,14 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<
     // Freeze the first column (metric names) and first row (headers)
     worksheet.set_freeze_panes(1, 1)?;
 
-    // Cache metrics for each crate
-    let crate_metrics: Vec<&[Metric]> = crates.iter().map(|c| c.metrics.as_slice()).collect();
-
     // Build per-crate metric lookup maps for O(1) access in the inner loop
-    let crate_metric_maps: Vec<HashMap<&str, &Metric>> = crate_metrics
+    let crate_metric_maps: Vec<HashMap<&str, &Metric>> = crates
         .iter()
-        .map(|metrics| metrics.iter().map(|m| (m.name(), m)).collect())
+        .map(|c| c.metrics.iter().map(|m| (m.name(), m)).collect())
         .collect();
 
     // Group metrics by category across all crates
-    let metrics_by_category = common::group_all_metrics_by_category(crate_metrics.iter().copied());
+    let metrics_by_category = common::group_all_metrics_by_category(crates.iter().map(|c| c.metrics.as_slice()));
 
     // Write metrics as rows, grouped by category
     let mut row = 1;
@@ -100,7 +97,7 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<
     for category in MetricCategory::iter() {
         if let Some(category_metric_names) = metrics_by_category.get(&category) {
             // Write category header (uppercase and bold with background color)
-            worksheet.write_string_with_format(row, 0, format!("{category}").to_uppercase(), &category_format)?;
+            worksheet.write_string_with_format(row, 0, category.as_uppercase_str(), &category_format)?;
 
             // Fill the rest of the category row with the same background color
             #[expect(clippy::cast_possible_truncation, reason = "Column count is limited by Excel's u16 column limit")]
