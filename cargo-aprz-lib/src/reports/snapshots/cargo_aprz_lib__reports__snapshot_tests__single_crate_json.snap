@@ -1,6 +1,6 @@
 ---
 source: cargo-aprz-lib/src/reports/mod.rs
-assertion_line: 307
+assertion_line: 308
 expression: json_output
 ---
 {
@@ -8,9 +8,9 @@ expression: json_output
     {
       "appraisal": {
         "reasons": [
-          "✔️coverage",
-          "✔️active",
-          "✔️maintained"
+          "coverage",
+          "active",
+          "maintained"
         ],
         "result": "LOW RISK"
       },

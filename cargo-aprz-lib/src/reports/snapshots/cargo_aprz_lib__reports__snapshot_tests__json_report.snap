@@ -1,6 +1,6 @@
 ---
 source: cargo-aprz-lib/src/reports/mod.rs
-assertion_line: 217
+assertion_line: 218
 expression: output
 ---
 {
@@ -8,7 +8,7 @@ expression: output
     {
       "appraisal": {
         "reasons": [
-          "✔️high_stars"
+          "high_stars"
         ],
         "result": "LOW RISK"
       },
@@ -31,7 +31,7 @@ expression: output
     {
       "appraisal": {
         "reasons": [
-          "🗙low_stars"
+          "low_stars"
         ],
         "result": "HIGH RISK"
       },

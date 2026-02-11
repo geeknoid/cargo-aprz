@@ -1,8 +1,6 @@
 //! Boolean expression evaluation for filtering crates
 
-use crate::Result;
 use cel_interpreter::Program;
-use ohno::app_err;
 use serde::de::Error as DeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::sync::Arc;
@@ -20,22 +18,6 @@ pub struct Expression {
 }
 
 impl Expression {
-    /// Create a new expression by parsing an expression string
-    ///
-    /// # Errors
-    /// Returns an error if the expression cannot be parsed
-    pub fn new(name: &str, description: Option<&str>, expression: &str, points: Option<u32>) -> Result<Self> {
-        let program = Program::compile(expression).map_err(|e| app_err!("Could not parse expression '{name}': {e}"))?;
-
-        Ok(Self {
-            name: Arc::from(name),
-            description: description.map(Arc::from),
-            points,
-            program: Arc::new(program),
-            expression_string: Arc::from(expression),
-        })
-    }
-
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
@@ -47,6 +29,7 @@ impl Expression {
         Arc::clone(&self.name)
     }
 
+    #[cfg(any(test, debug_assertions))]
     #[must_use]
     pub fn description(&self) -> Option<&str> {
         self.description.as_deref()
@@ -63,6 +46,7 @@ impl Expression {
         self.points
     }
 
+    #[cfg(any(test, debug_assertions))]
     #[must_use]
     pub fn expression(&self) -> &str {
         &self.expression_string
@@ -118,6 +102,24 @@ impl<'de> Deserialize<'de> for Expression {
             points: data.points,
             program: Arc::new(program),
             expression_string: data.expression,
+        })
+    }
+}
+
+#[cfg(test)]
+impl Expression {
+    /// Create a new expression by parsing an expression string (test helper).
+    pub(crate) fn new(name: &str, description: Option<&str>, expression: &str, points: Option<u32>) -> crate::Result<Self> {
+        use ohno::app_err;
+
+        let program = Program::compile(expression).map_err(|e| app_err!("Could not parse expression '{name}': {e}"))?;
+
+        Ok(Self {
+            name: Arc::from(name),
+            description: description.map(Arc::from),
+            points,
+            program: Arc::new(program),
+            expression_string: Arc::from(expression),
         })
     }
 }

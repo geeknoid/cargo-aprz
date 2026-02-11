@@ -1,6 +1,6 @@
 ---
 source: cargo-aprz-lib/src/reports/mod.rs
-assertion_line: 209
+assertion_line: 210
 expression: output
 ---
 <!DOCTYPE html>
@@ -153,8 +153,8 @@ expression: output
           </tr>
           <tr class="metric-row">
             <td><strong>Reasons</strong></td>
-            <td><span title="High stars and good coverage">✔️high_stars</span></td>
-            <td><span title="Low star count">🗙low_stars</span></td>
+            <td><span title="High stars and good coverage">✔️ high_stars</span></td>
+            <td><span title="Low star count">❌ low_stars</span></td>
             <td><span class="na">n/a</span></td>
           </tr>
           <tr class="category-spacer">

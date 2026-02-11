@@ -1,6 +1,6 @@
 ---
 source: cargo-aprz-lib/src/reports/mod.rs
-assertion_line: 299
+assertion_line: 300
 expression: console_output
 ---
 comprehensive-crate v2.0.0 is appraised as LOW RISK

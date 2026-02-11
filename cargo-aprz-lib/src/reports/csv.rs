@@ -1,6 +1,5 @@
 use super::{ReportableCrate, common};
 use crate::Result;
-use crate::expr::ExpressionOutcome;
 use crate::metrics::MetricCategory;
 use core::fmt::Write;
 use std::borrow::Cow;
@@ -38,7 +37,7 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<
         for crate_info in crates {
             if let Some(appraisal) = &crate_info.appraisal {
                 let reasons = common::join_with(
-                    appraisal.expression_outcomes.iter().map(ExpressionOutcome::icon_name), "; ");
+                    appraisal.expression_outcomes.iter().map(common::outcome_icon_name), "; ");
                 write!(writer, ",{}", escape_csv(&reasons))?;
             } else {
                 write!(writer, ",")?;
@@ -192,7 +191,7 @@ mod tests {
         let result = generate(&crates, &mut output);
         result.unwrap();
         assert!(output.contains("Appraisals,LOW RISK"));
-        assert!(output.contains("Reasons,✔\u{fe0f}good; ✔\u{fe0f}quality"));
+        assert!(output.contains("Reasons,✔\u{fe0f} good; ✔\u{fe0f} quality"));
     }
 
     #[test]

@@ -310,7 +310,7 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], timestamp: DateTime<Local>
                             writer,
                             "<span title=\"{}\">{}</span>",
                             html_escape(&outcome.description),
-                            html_escape(&outcome.icon_name().to_string())
+                            html_escape(&common::outcome_icon_name(outcome).to_string())
                         )?;
                     }
                 }
@@ -322,12 +322,7 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], timestamp: DateTime<Local>
         writeln!(writer, "          </tr>")?;
 
         // Add spacer row after evaluation
-        writeln!(writer, "          <tr class=\"category-spacer\">")?;
-        writeln!(writer, "            <td></td>")?;
-        for _ in crates {
-            writeln!(writer, "            <td></td>")?;
-        }
-        writeln!(writer, "          </tr>")?;
+        write_spacer_row(writer, crates.len())?;
     }
 
     // Iterate through categories in order
@@ -340,12 +335,7 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], timestamp: DateTime<Local>
         if let Some(category_metrics) = metrics_by_category.get(&category) {
             // Add spacer row before each category except the first
             if !is_first_category {
-                writeln!(writer, "          <tr class=\"category-spacer\">")?;
-                writeln!(writer, "            <td></td>")?;
-                for _ in crates {
-                    writeln!(writer, "            <td></td>")?;
-                }
-                writeln!(writer, "          </tr>")?;
+                write_spacer_row(writer, crates.len())?;
             }
             is_first_category = false;
 
@@ -511,6 +501,16 @@ fn format_keywords_or_categories<W: Write>(value: &str, url_type: &str, writer: 
         )?;
     }
 
+    Ok(())
+}
+
+fn write_spacer_row<W: Write>(writer: &mut W, crate_count: usize) -> Result<()> {
+    writeln!(writer, "          <tr class=\"category-spacer\">")?;
+    writeln!(writer, "            <td></td>")?;
+    for _ in 0..crate_count {
+        writeln!(writer, "            <td></td>")?;
+    }
+    writeln!(writer, "          </tr>")?;
     Ok(())
 }
 

@@ -29,8 +29,10 @@ mod appraisal;
 mod evaluator;
 mod expression;
 mod expression_outcome;
+mod risk;
 
-pub use appraisal::{Appraisal, Risk};
+pub use appraisal::Appraisal;
 pub use evaluator::evaluate;
 pub use expression::Expression;
 pub use expression_outcome::ExpressionOutcome;
+pub use risk::Risk;

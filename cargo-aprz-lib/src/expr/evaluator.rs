@@ -40,23 +40,15 @@ pub fn evaluate(
     let context = build_cel_context(metrics, now);
 
     for expr in high_risk_if_any {
-        match evaluate_expression(expr.program(), expr.name(), &context) {
-            Ok(true) => {
-                return Ok(Appraisal::new(
-                    Risk::High,
-                    vec![ExpressionOutcome::new(
-                        expr.name_arc(),
-                        expr.description_or_expression_arc(),
-                        true,
-                    )],
-                ));
-            }
-            Ok(false) => {
-                // Expression evaluated to false, continue checking
-            }
-            Err(e) => {
-                return Err(e);
-            }
+        if evaluate_expression(expr.program(), expr.name(), &context)? {
+            return Ok(Appraisal::new(
+                Risk::High,
+                vec![ExpressionOutcome::new(
+                    expr.name_arc(),
+                    expr.description_or_expression_arc(),
+                    true,
+                )],
+            ));
         }
     }
 
@@ -72,23 +64,18 @@ pub fn evaluate(
         let points = expr.points().unwrap_or(1);
         total_possible_points += points;
 
-        match evaluate_expression(expr.program(), expr.name(), &context) {
-            Ok(result) => {
-                if result {
-                    total_granted_points += points;
-                }
-                outcomes.push(ExpressionOutcome::new(
-                    expr.name_arc(),
-                    expr.description_or_expression_arc(),
-                    result,
-                ));
-            }
-            Err(e) => {
-                return Err(e);
-            }
+        let result = evaluate_expression(expr.program(), expr.name(), &context)?;
+        if result {
+            total_granted_points += points;
         }
+        outcomes.push(ExpressionOutcome::new(
+            expr.name_arc(),
+            expr.description_or_expression_arc(),
+            result,
+        ));
     }
 
+    // No expressions means nothing to fail, so default to a perfect score
     let score = if total_possible_points > 0 {
         f64::from(total_granted_points) / f64::from(total_possible_points) * 100.0
     } else {

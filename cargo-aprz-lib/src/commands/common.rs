@@ -190,12 +190,8 @@ impl<'a, H: super::Host> Common<'a, H> {
 
     /// Initialize logger based on log level
     fn init_logging(log_level: LogLevel) {
-        if log_level == LogLevel::None {
-            return;
-        }
-
         let level = match log_level {
-            LogLevel::None => return, // Already checked above, but being explicit
+            LogLevel::None => return,
             LogLevel::Error => "error",
             LogLevel::Warn => "warn",
             LogLevel::Info => "info",
@@ -208,7 +204,7 @@ impl<'a, H: super::Host> Common<'a, H> {
         env_logger::Builder::from_env(env)
             .format_timestamp(None)
             .format_module_path(false)
-            .format_target(matches!(log_level, LogLevel::Debug) || matches!(log_level, LogLevel::Trace))
+            .format_target(matches!(log_level, LogLevel::Debug | LogLevel::Trace))
             .init();
     }
 

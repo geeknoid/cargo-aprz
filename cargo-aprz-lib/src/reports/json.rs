@@ -18,7 +18,7 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<
             let mut eval_obj = serde_json::Map::new();
             eval_obj.insert("result".into(), json!(common::format_risk_status(appraisal.risk)));
             eval_obj.insert("reasons".into(), json!(appraisal.expression_outcomes.iter()
-                .map(|o| o.icon_name().to_string())
+                .map(|o| &*o.name)
                 .collect::<Vec<_>>()));
             crate_obj.insert("appraisal".into(), json!(eval_obj));
         }
@@ -158,7 +158,7 @@ mod tests {
         result.unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&output).unwrap();
         assert_eq!(parsed["crates"][0]["appraisal"]["result"], "LOW RISK");
-        assert_eq!(parsed["crates"][0]["appraisal"]["reasons"][0], "✔\u{fe0f}good");
+        assert_eq!(parsed["crates"][0]["appraisal"]["reasons"][0], "good");
     }
 
     #[test]

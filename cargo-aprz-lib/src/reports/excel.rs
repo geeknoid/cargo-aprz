@@ -1,6 +1,6 @@
 use super::{ReportableCrate, common};
 use crate::Result;
-use crate::expr::{Appraisal, ExpressionOutcome, Risk};
+use crate::expr::{Appraisal, Risk};
 use crate::metrics::{MetricCategory, MetricValue};
 use rust_xlsxwriter::{Color, DocProperties, Format, FormatAlign, Workbook};
 use std::io::Write;
@@ -77,7 +77,7 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<
         // Reasons row
         worksheet.write_string_with_format(row, 0, "Reasons", &bold_format)?;
         write_eval_row(worksheet, row, crates, |eval| common::join_with(
-            eval.expression_outcomes.iter().map(ExpressionOutcome::icon_name), "; "))?;
+            eval.expression_outcomes.iter().map(common::outcome_icon_name), "; "))?;
         row += 1;
 
         // Add blank row after evaluation

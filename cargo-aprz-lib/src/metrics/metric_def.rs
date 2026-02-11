@@ -1,5 +1,5 @@
 use super::{MetricCategory, MetricValue};
-use crate::facts::{CrateFacts, DocMetricState};
+use crate::facts::CrateFacts;
 use chrono::DateTime;
 use compact_str::format_compact;
 
@@ -173,11 +173,8 @@ pub const METRIC_DEFINITIONS: &[MetricDef] = &[
         "Number of public API elements (functions, structs, etc.)",
         Documentation,
         |facts| {
-            let data = facts.docs_data.as_ref()?;
-            match &data.metrics {
-                DocMetricState::Found(metrics) => Some(MetricValue::UInt(metrics.public_api_elements)),
-                DocMetricState::UnknownFormatVersion(_) => None,
-            }
+            let m = facts.docs_data.as_ref()?.metrics.found()?;
+            Some(MetricValue::UInt(m.public_api_elements))
         },
         || Some(MetricValue::UInt(0))
     ),
@@ -186,11 +183,8 @@ pub const METRIC_DEFINITIONS: &[MetricDef] = &[
         "Number of public API elements without documentation",
         Documentation,
         |facts| {
-            let data = facts.docs_data.as_ref()?;
-            match &data.metrics {
-                DocMetricState::Found(metrics) => Some(MetricValue::UInt(metrics.undocumented_elements)),
-                DocMetricState::UnknownFormatVersion(_) => None,
-            }
+            let m = facts.docs_data.as_ref()?.metrics.found()?;
+            Some(MetricValue::UInt(m.undocumented_elements))
         },
         || Some(MetricValue::UInt(0))
     ),
@@ -199,11 +193,8 @@ pub const METRIC_DEFINITIONS: &[MetricDef] = &[
         "Percentage of public API elements with documentation",
         Documentation,
         |facts| {
-            let data = facts.docs_data.as_ref()?;
-            match &data.metrics {
-                DocMetricState::Found(metrics) => Some(MetricValue::Float(metrics.doc_coverage_percentage)),
-                DocMetricState::UnknownFormatVersion(_) => None,
-            }
+            let m = facts.docs_data.as_ref()?.metrics.found()?;
+            Some(MetricValue::Float(m.doc_coverage_percentage))
         },
         || Some(MetricValue::Float(0.0))
     ),
@@ -212,11 +203,8 @@ pub const METRIC_DEFINITIONS: &[MetricDef] = &[
         "Whether crate-level documentation exists",
         Documentation,
         |facts| {
-            let data = facts.docs_data.as_ref()?;
-            match &data.metrics {
-                DocMetricState::Found(metrics) => Some(MetricValue::Boolean(metrics.has_crate_level_docs)),
-                DocMetricState::UnknownFormatVersion(_) => None,
-            }
+            let m = facts.docs_data.as_ref()?.metrics.found()?;
+            Some(MetricValue::Boolean(m.has_crate_level_docs))
         },
         || Some(MetricValue::Boolean(false))
     ),
@@ -225,11 +213,8 @@ pub const METRIC_DEFINITIONS: &[MetricDef] = &[
         "Number of broken links in documentation",
         Documentation,
         |facts| {
-            let data = facts.docs_data.as_ref()?;
-            match &data.metrics {
-                DocMetricState::Found(metrics) => Some(MetricValue::UInt(metrics.broken_doc_links)),
-                DocMetricState::UnknownFormatVersion(_) => None,
-            }
+            let m = facts.docs_data.as_ref()?.metrics.found()?;
+            Some(MetricValue::UInt(m.broken_doc_links))
         },
         || Some(MetricValue::UInt(0))
     ),
@@ -238,11 +223,8 @@ pub const METRIC_DEFINITIONS: &[MetricDef] = &[
         "Number of code examples in documentation",
         Documentation,
         |facts| {
-            let data = facts.docs_data.as_ref()?;
-            match &data.metrics {
-                DocMetricState::Found(metrics) => Some(MetricValue::UInt(metrics.examples_in_docs)),
-                DocMetricState::UnknownFormatVersion(_) => None,
-            }
+            let m = facts.docs_data.as_ref()?.metrics.found()?;
+            Some(MetricValue::UInt(m.examples_in_docs))
         },
         || Some(MetricValue::UInt(0))
     ),

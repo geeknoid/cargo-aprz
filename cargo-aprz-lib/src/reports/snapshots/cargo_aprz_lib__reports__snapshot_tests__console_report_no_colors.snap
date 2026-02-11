@@ -1,6 +1,6 @@
 ---
 source: cargo-aprz-lib/src/reports/mod.rs
-assertion_line: 193
+assertion_line: 194
 expression: output
 ---
 tokio v1.35.0 is appraised as LOW RISK
@@ -27,7 +27,7 @@ Trustworthiness
 ═══════════════════════════════════════
 
 serde v1.0.195 is appraised as HIGH RISK
-  🗙 low_stars
+  ❌ low_stars
 
 Metadata
   crate.name     : serde

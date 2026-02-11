@@ -1,7 +1,8 @@
 //! Common utilities shared across report generators.
 
-use crate::expr::Risk;
+use crate::expr::{ExpressionOutcome, Risk};
 use crate::metrics::{Metric, MetricCategory, MetricValue};
+use core::fmt;
 use std::collections::{HashMap, HashSet};
 
 /// Format a metric value as a string using consistent formatting rules.
@@ -73,7 +74,7 @@ pub fn format_keywords_or_categories_with_prefix(value: &str) -> String {
 pub fn join_with<I, D>(iter: I, sep: &str) -> String
 where
     I: IntoIterator<Item = D>,
-    D: core::fmt::Display,
+    D: fmt::Display,
 {
     use core::fmt::Write;
     let mut result = String::new();
@@ -92,6 +93,26 @@ pub const fn format_risk_status(risk: Risk) -> &'static str {
         Risk::Low => "LOW RISK",
         Risk::Medium => "MEDIUM RISK",
         Risk::High => "HIGH RISK",
+    }
+}
+
+/// Returns the pass/fail icon for an expression outcome.
+pub const fn outcome_icon(outcome: &ExpressionOutcome) -> &'static str {
+    if outcome.result { "✔\u{fe0f}" } else { "❌" }
+}
+
+/// Returns a displayable `icon + name` value (no allocation until formatted).
+pub const fn outcome_icon_name(outcome: &ExpressionOutcome) -> IconName<'_> {
+    IconName(outcome)
+}
+
+/// A zero-allocation wrapper that displays `icon + name` for an [`ExpressionOutcome`].
+#[derive(Debug)]
+pub struct IconName<'a>(&'a ExpressionOutcome);
+
+impl fmt::Display for IconName<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {}", outcome_icon(self.0), self.0.name)
     }
 }
 

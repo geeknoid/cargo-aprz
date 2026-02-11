@@ -13,6 +13,17 @@ pub enum DocMetricState {
     UnknownFormatVersion(u64),
 }
 
+impl DocMetricState {
+    /// Returns the metrics if available, or `None` for unknown format versions.
+    #[must_use]
+    pub const fn found(&self) -> Option<&DocsMetrics> {
+        match self {
+            Self::Found(metrics) => Some(metrics),
+            Self::UnknownFormatVersion(_) => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DocsMetrics {
     pub doc_coverage_percentage: f64,
