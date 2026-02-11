@@ -10,6 +10,11 @@ use url::Url;
 
 const GIT_TIMEOUT: Duration = Duration::from_mins(5);
 
+/// Convert a path to a UTF-8 string, returning an error if the path contains invalid UTF-8.
+fn path_str(path: &Path) -> Result<&str> {
+    path.to_str().into_app_err("invalid UTF-8 in repository path")
+}
+
 /// Clone or update a git repository
 pub async fn get_repo(repo_path: &Path, repo_url: &Url) -> Result<()> {
     let start_time = std::time::Instant::now();
@@ -21,7 +26,7 @@ pub async fn get_repo(repo_path: &Path, repo_url: &Url) -> Result<()> {
 }
 
 async fn get_repo_core(repo_path: &Path, repo_url: &Url) -> Result<()> {
-    let path_str = repo_path.to_str().into_app_err("invalid UTF-8 in repository path")?;
+    let path_str = path_str(repo_path)?;
 
     if !repo_path.exists() {
         if let Some(parent) = repo_path.parent() {
@@ -85,9 +90,7 @@ fn check_git_output(output: &std::process::Output, operation: &str) -> Result<()
 
 /// Count unique contributors in the repository
 pub async fn count_contributors(repo_path: &Path) -> Result<u64> {
-    let path_str = repo_path.to_str().into_app_err("invalid UTF-8 in repository path")?;
-
-    // Get all author emails from git log across all refs
+    let path_str = path_str(repo_path)?;
     // %ae = author email (respecting .mailmap)
     // --all ensures we count contributors from all fetched refs, not just HEAD
     let output = run_git_with_timeout(&["-C", path_str, "log", "--all", "--format=%ae"]).await?;
@@ -106,7 +109,7 @@ pub async fn count_contributors(repo_path: &Path) -> Result<u64> {
 
 /// Count commits in the last N days
 pub async fn count_recent_commits(repo_path: &Path, days: i64) -> Result<u64> {
-    let path_str = repo_path.to_str().into_app_err("invalid UTF-8 in repository path")?;
+    let path_str = path_str(repo_path)?;
 
     let since_arg = format!("--since={days} days ago");
     let output = run_git_with_timeout(&["-C", path_str, "rev-list", "--count", &since_arg, "HEAD"]).await?;
@@ -124,7 +127,7 @@ pub async fn count_recent_commits(repo_path: &Path, days: i64) -> Result<u64> {
 
 /// Count total commits in the repository
 pub async fn count_all_commits(repo_path: &Path) -> Result<u64> {
-    let path_str = repo_path.to_str().into_app_err("invalid UTF-8 in repository path")?;
+    let path_str = path_str(repo_path)?;
 
     let output = run_git_with_timeout(&["-C", path_str, "rev-list", "--count", "HEAD"]).await?;
 
@@ -141,7 +144,7 @@ pub async fn count_all_commits(repo_path: &Path) -> Result<u64> {
 
 /// Get the timestamp of the most recent commit
 pub async fn get_last_commit_time(repo_path: &Path) -> Result<DateTime<Utc>> {
-    let path_str = repo_path.to_str().into_app_err("invalid UTF-8 in repository path")?;
+    let path_str = path_str(repo_path)?;
 
     let output = run_git_with_timeout(&["-C", path_str, "log", "-1", "--format=%aI"]).await?;
 

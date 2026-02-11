@@ -1,9 +1,8 @@
 use super::{ReportableCrate, common};
 use crate::Result;
-use crate::expr::{Appraisal, Risk};
-use crate::metrics::{Metric, MetricCategory, MetricValue};
+use crate::expr::{Appraisal, ExpressionOutcome, Risk};
+use crate::metrics::{MetricCategory, MetricValue};
 use rust_xlsxwriter::{Color, DocProperties, Format, FormatAlign, Workbook};
-use std::collections::HashMap;
 use std::io::Write;
 use strum::IntoEnumIterator;
 
@@ -48,10 +47,7 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<
     worksheet.set_freeze_panes(1, 1)?;
 
     // Build per-crate metric lookup maps for O(1) access in the inner loop
-    let crate_metric_maps: Vec<HashMap<&str, &Metric>> = crates
-        .iter()
-        .map(|c| c.metrics.iter().map(|m| (m.name(), m)).collect())
-        .collect();
+    let crate_metric_maps = common::build_metric_lookup_maps(crates);
 
     // Group metrics by category across all crates
     let metrics_by_category = common::group_all_metrics_by_category(crates.iter().map(|c| c.metrics.as_slice()));
@@ -80,13 +76,8 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<
 
         // Reasons row
         worksheet.write_string_with_format(row, 0, "Reasons", &bold_format)?;
-        write_eval_row(worksheet, row, crates, |eval| common::join_with(eval.expression_outcomes.iter().map(|o| {
-            if o.result {
-                format!("✔️{}", o.name)
-            } else {
-                format!("🗙{}", o.name)
-            }
-        }), "; "))?;
+        write_eval_row(worksheet, row, crates, |eval| common::join_with(
+            eval.expression_outcomes.iter().map(ExpressionOutcome::icon_name), "; "))?;
         row += 1;
 
         // Add blank row after evaluation
@@ -204,7 +195,7 @@ where
 mod tests {
     use super::*;
     use crate::expr::ExpressionOutcome;
-    use crate::metrics::MetricDef;
+    use crate::metrics::{Metric, MetricDef};
     use std::sync::Arc;
 
     static NAME_DEF: MetricDef = MetricDef {

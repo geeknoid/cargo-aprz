@@ -19,6 +19,28 @@ impl ExpressionOutcome {
             result,
         }
     }
+
+    /// Returns the pass/fail icon for this outcome.
+    #[must_use]
+    pub const fn icon(&self) -> &'static str {
+        if self.result { "✔" } else { "✗" }
+    }
+
+    /// Returns a displayable `icon + name` value (no allocation until formatted).
+    #[must_use]
+    pub const fn icon_name(&self) -> IconName<'_> {
+        IconName(self)
+    }
+}
+
+/// A zero-allocation wrapper that displays `icon + name` for an [`ExpressionOutcome`].
+#[derive(Debug)]
+pub struct IconName<'a>(&'a ExpressionOutcome);
+
+impl fmt::Display for IconName<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {}", self.0.icon(), self.0.name)
+    }
 }
 
 impl fmt::Display for ExpressionOutcome {

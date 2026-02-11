@@ -130,6 +130,14 @@ pub fn group_all_metrics_by_category<'a>(crate_metrics: impl IntoIterator<Item =
     metrics_by_category
 }
 
+/// Build per-crate metric lookup maps for O(1) access by metric name.
+pub fn build_metric_lookup_maps(crates: &[super::ReportableCrate]) -> Vec<HashMap<&str, &Metric>> {
+    crates
+        .iter()
+        .map(|c| c.metrics.iter().map(|m| (m.name(), m)).collect())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,11 +1,10 @@
 use super::{ReportableCrate, common};
 use crate::Result;
 use crate::expr::Risk;
-use crate::metrics::{Metric, MetricCategory};
+use crate::metrics::MetricCategory;
 use chrono::{DateTime, Local};
 use core::fmt::Write;
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
-use std::collections::HashMap;
 use strum::IntoEnumIterator;
 
 #[expect(clippy::too_many_lines, reason = "HTML template generation naturally requires many lines")]
@@ -307,13 +306,11 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], timestamp: DateTime<Local>
                             write!(writer, "<br>")?;
                         }
 
-                        let icon = if outcome.result { "✔️" } else { "🗙" };
                         write!(
                             writer,
-                            "<span title=\"{}\">{}{}</span>",
+                            "<span title=\"{}\">{}</span>",
                             html_escape(&outcome.description),
-                            icon,
-                            html_escape(&outcome.name)
+                            html_escape(&outcome.icon_name().to_string())
                         )?;
                     }
                 }
@@ -337,10 +334,7 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], timestamp: DateTime<Local>
     let mut is_first_category = true;
 
     // Build per-crate metric lookup maps for O(1) access in the inner loop
-    let crate_metric_maps: Vec<HashMap<&str, &Metric>> = crates
-        .iter()
-        .map(|c| c.metrics.iter().map(|m| (m.name(), m)).collect())
-        .collect();
+    let crate_metric_maps = common::build_metric_lookup_maps(crates);
 
     for category in MetricCategory::iter() {
         if let Some(category_metrics) = metrics_by_category.get(&category) {
@@ -524,7 +518,7 @@ fn format_keywords_or_categories<W: Write>(value: &str, url_type: &str, writer: 
 mod tests {
     use super::*;
     use crate::expr::Appraisal;
-    use crate::metrics::{MetricDef, MetricValue};
+    use crate::metrics::{Metric, MetricDef, MetricValue};
     use chrono::TimeZone;
     use std::sync::Arc;
 

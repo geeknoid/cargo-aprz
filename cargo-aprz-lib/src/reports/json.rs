@@ -17,13 +17,9 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<
         if let Some(appraisal) = &crate_info.appraisal {
             let mut eval_obj = serde_json::Map::new();
             eval_obj.insert("result".into(), json!(common::format_risk_status(appraisal.risk)));
-            eval_obj.insert("reasons".into(), json!(appraisal.expression_outcomes.iter().map(|o| {
-                if o.result {
-                    format!("✔️{}", o.name)
-                } else {
-                    format!("🗙{}", o.name)
-                }
-            }).collect::<Vec<_>>()));
+            eval_obj.insert("reasons".into(), json!(appraisal.expression_outcomes.iter()
+                .map(|o| o.icon_name().to_string())
+                .collect::<Vec<_>>()));
             crate_obj.insert("appraisal".into(), json!(eval_obj));
         }
 

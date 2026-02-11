@@ -32,11 +32,7 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], use_colors: bool, writer: 
             writeln!(writer, "{} v{} is appraised as {colored_status}", crate_info.name, crate_info.version)?;
 
             for outcome in &eval.expression_outcomes {
-                if outcome.result {
-                    writeln!(writer, "  ✔️ {}", outcome.name)?;
-                } else {
-                    writeln!(writer, "  🗙 {}", outcome.name)?;
-                }
+                writeln!(writer, "  {} {}", outcome.icon(), outcome.name)?;
             }
         }
 

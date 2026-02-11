@@ -1,9 +1,9 @@
 use super::{ReportableCrate, common};
 use crate::Result;
-use crate::metrics::{Metric, MetricCategory};
+use crate::expr::ExpressionOutcome;
+use crate::metrics::MetricCategory;
 use core::fmt::Write;
 use std::borrow::Cow;
-use std::collections::HashMap;
 use strum::IntoEnumIterator;
 
 pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<()> {
@@ -11,10 +11,7 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<
     let metrics_by_category = common::group_all_metrics_by_category(crates.iter().map(|c| c.metrics.as_slice()));
 
     // Build per-crate metric lookup maps for O(1) access
-    let crate_metric_maps: Vec<HashMap<&str, &Metric>> = crates
-        .iter()
-        .map(|c| c.metrics.iter().map(|m| (m.name(), m)).collect())
-        .collect();
+    let crate_metric_maps = common::build_metric_lookup_maps(crates);
 
     // Write header row
     write!(writer, "Metric")?;
@@ -40,13 +37,8 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<
         write!(writer, "Reasons")?;
         for crate_info in crates {
             if let Some(appraisal) = &crate_info.appraisal {
-                let reasons = common::join_with(appraisal.expression_outcomes.iter().map(|o| {
-                    if o.result {
-                        format!("✔️{}", o.name)
-                    } else {
-                        format!("🗙{}", o.name)
-                    }
-                }), "; ");
+                let reasons = common::join_with(
+                    appraisal.expression_outcomes.iter().map(ExpressionOutcome::icon_name), "; ");
                 write!(writer, ",{}", escape_csv(&reasons))?;
             } else {
                 write!(writer, ",")?;
