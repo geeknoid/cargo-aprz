@@ -289,6 +289,7 @@ dependencies = [
  "humantime-serde",
  "indicatif",
  "insta",
+ "layered",
  "log",
  "mmap-rs",
  "ohno",
@@ -308,6 +309,7 @@ dependencies = [
  "rustdoc-types 0.56.0",
  "rustdoc-types 0.57.0",
  "rustsec",
+ "seatbelt",
  "semver",
  "serde",
  "serde_json",
@@ -316,6 +318,7 @@ dependencies = [
  "tar",
  "tempfile",
  "terminal_size",
+ "tick",
  "tokio",
  "toml",
  "url",
@@ -2334,6 +2337,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "layered"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8b1bbe210640071cb0d0f4810a9165288afaeb55ed6f38c74240e9e76cd99e91"
+dependencies = [
+ "tower-layer",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2921,6 +2933,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "recoverable"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d79514779c34cfee6ab615b01ced5b6c58e9d9f21fe0a3cf241a0741f8ac6693"
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3308,6 +3326,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
+name = "seatbelt"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7afd866c214560ee1d77497188fbb25f7f7e255270641ed3f298c0514d220bd"
+dependencies = [
+ "fastrand",
+ "layered",
+ "recoverable",
+ "tick",
+]
+
+[[package]]
 name = "security-framework"
 version = "3.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3671,6 +3701,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "tick"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "504021cef80d1be36046fe7ff4b2e907434fc2a0974fe144705291b75c08e159"
+dependencies = [
+ "futures-core",
+ "pin-project-lite",
+ "tokio",
 ]
 
 [[package]]

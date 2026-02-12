@@ -110,6 +110,7 @@ humantime-serde = { version = "1.1.1", default-features = false }
 indicatif = { version = "0.18.3", default-features = false }
 insta = { version = "1.42.1", default-features = false }
 itertools = { version = "0.14.0", default-features = false, features = ["use_std"] }
+layered = { version = "0.3.0", default-features = false }
 log = { version = "0.4.29", default-features = false }
 mmap-rs = { version = "0.7.0", default-features = false }
 ohno = { version = "0.3.0", default-features = false, features = ["app-err"] }
@@ -129,6 +130,7 @@ rustdoc-types-v55 = { package = "rustdoc-types", version = "0.55.0", default-fea
 rustdoc-types-v56 = { package = "rustdoc-types", version = "0.56.0", default-features = false }
 rustdoc-types-v57 = { package = "rustdoc-types", version = "0.57.0", default-features = false }
 rustsec = { version = "0.32.0", default-features = true }
+seatbelt = { version = "0.2.0", default-features = false, features = ["retry", "timeout"] }
 semver = { version = "1.0.27", default-features = false, features = ["serde"] }
 serde = { version = "1.0.228", default-features = false, features = ["derive", "std"] }
 serde_json = { version = "1.0.145", default-features = false, features = ["std"] }
@@ -137,6 +139,7 @@ strum = { version = "0.27.2", default-features = false, features = ["derive"] }
 tar = { version = "0.4.38", default-features = false }
 tempfile = { version = "3.25.0", default-features = false }
 terminal_size = { version = "0.4.3", default-features = false }
+tick = { version = "0.1.2", default-features = false, features = ["tokio"] }
 tokio = { version = "1.48.0", default-features = false, features = ["macros", "rt-multi-thread", "sync", "process", "time"] }
 toml = { version = "0.9.8", default-features = false, features = ["parse", "serde", "display"] }
 url = { version = "2.5.4", default-features = false }

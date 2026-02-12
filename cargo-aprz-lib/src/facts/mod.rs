@@ -40,6 +40,7 @@ pub(crate) mod hosting;
 mod path_utils;
 mod progress;
 mod provider_result;
+pub(crate) mod resilient_http;
 mod repo_spec;
 mod request_tracker;
 

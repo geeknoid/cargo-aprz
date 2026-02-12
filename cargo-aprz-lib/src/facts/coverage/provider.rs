@@ -146,9 +146,7 @@ async fn try_branch(
     let codecov_url = format!("{base_url}/gh/{owner}/{repo}/branch/{branch}/graph/badge.svg");
     log::info!(target: LOG_TARGET, "Querying {base_url} for coverage of repository '{repo_spec}'");
 
-    let response = client
-        .get(&codecov_url)
-        .send()
+    let response = crate::facts::resilient_http::resilient_get(client, &codecov_url)
         .await
         .inspect_err(|e| log::debug!(target: LOG_TARGET, "Could not send HTTP request to {base_url} ('{branch}' branch): {e:#}"))?;
 

@@ -145,8 +145,33 @@ impl Provider {
         self.cache_dir.join(format!("{safe_name}@{safe_version}.json"))
     }
 
-    /// Download .zst file from docs.rs asynchronously
+    /// Download .zst file from docs.rs asynchronously with retry and timeout.
     async fn download_zst(&self, crate_spec: &CrateSpec) -> Result<PathBuf, DownloadError> {
+        let provider = self.clone();
+        let spec = crate_spec.clone();
+
+        // resilient_download retries on Err, passes through Ok(None) for 404.
+        let result = crate::facts::resilient_http::resilient_download(
+            "docs_download",
+            spec,
+            None,
+            move |spec| {
+                let provider = provider.clone();
+                async move { provider.download_zst_core(&spec).await }
+            },
+        )
+        .await;
+
+        match result {
+            Ok(Some(path)) => Ok(path),
+            Ok(None) => Err(DownloadError::NotFound),
+            Err(e) => Err(DownloadError::Other(e)),
+        }
+    }
+
+    /// Inner download logic for a single attempt.
+    /// Returns `Ok(None)` for 404 (not retryable), `Ok(Some(path))` on success.
+    async fn download_zst_core(&self, crate_spec: &CrateSpec) -> Result<Option<PathBuf>> {
         let crate_name = crate_spec.name();
         let version = crate_spec.version().to_string();
 
@@ -154,18 +179,19 @@ impl Provider {
 
         log::info!(target: LOG_TARGET, "Querying docs.rs for documentation on {crate_spec}");
 
-        let response = self.client.get(&url).send().await.map_err(|e| DownloadError::Other(e.into()))?;
+        let response = crate::facts::resilient_http::resilient_get(&self.client, &url)
+            .await?;
 
         let status = response.status();
         if !status.is_success() {
             if status == reqwest::StatusCode::NOT_FOUND {
-                return Err(DownloadError::NotFound);
+                return Ok(None);
             }
             let body = response.text().await.unwrap_or_else(|_| String::from("<unable to read body>"));
             log::debug!(target: LOG_TARGET, "Response body (first 500 chars): {}", body.chars().take(500).collect::<String>());
-            return Err(DownloadError::Other(app_err!(
+            return Err(app_err!(
                 "could not download docs for {crate_spec}: HTTP {status}"
-            )));
+            ));
         }
 
         // Create a temporary file with sanitized filename
@@ -176,8 +202,7 @@ impl Provider {
 
         let mut file = tokio::fs::File::create(&temp_file)
             .await
-            .into_app_err_with(|| format!("creating temp file '{}'", temp_file.display()))
-            .map_err(DownloadError::Other)?;
+            .into_app_err_with(|| format!("creating temp file '{}'", temp_file.display()))?;
 
         let mut stream = response.bytes_stream();
         let mut total_bytes = 0;
@@ -185,23 +210,20 @@ impl Provider {
         while let Some(chunk) = stream
             .try_next()
             .await
-            .into_app_err("reading response chunk")
-            .map_err(DownloadError::Other)?
+            .into_app_err("reading response chunk")?
         {
             total_bytes += chunk.len();
             file.write_all(&chunk)
                 .await
-                .into_app_err_with(|| format!("writing to temp file '{}'", temp_file.display()))
-                .map_err(DownloadError::Other)?;
+                .into_app_err_with(|| format!("writing to temp file '{}'", temp_file.display()))?;
         }
 
         file.flush()
             .await
-            .into_app_err_with(|| format!("flushing temp file '{}'", temp_file.display()))
-            .map_err(DownloadError::Other)?;
+            .into_app_err_with(|| format!("flushing temp file '{}'", temp_file.display()))?;
 
         log::debug!(target: LOG_TARGET, "Downloaded {total_bytes} bytes for {crate_spec} to temp file '{}'", temp_file.display());
-        Ok(temp_file)
+        Ok(Some(temp_file))
     }
 
     fn calculate_docs_metrics(&self, zst_path: impl AsRef<Path>, crate_spec: &CrateSpec) -> Result<DocsData> {

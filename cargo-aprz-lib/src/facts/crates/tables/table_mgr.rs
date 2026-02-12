@@ -388,14 +388,35 @@ async fn prep_tables(
     now: DateTime<Utc>,
     progress: Arc<dyn Progress>,
 ) -> Result<TableMgr> {
+    let tables_root = tables_root.as_ref().to_path_buf();
+    let source = source.clone();
+
+    crate::facts::resilient_http::resilient_download(
+        "crates_db_download",
+        (source, tables_root, max_ttl, now, progress),
+        Some(Duration::from_mins(30)),
+        move |(source, tables_root, max_ttl, now, progress)| async move {
+            prep_tables_core(&source, tables_root, max_ttl, now, progress).await
+        },
+    )
+    .await
+}
+
+async fn prep_tables_core(
+    source: &Url,
+    tables_root: std::path::PathBuf,
+    max_ttl: Duration,
+    now: DateTime<Utc>,
+    progress: Arc<dyn Progress>,
+) -> Result<TableMgr> {
     log::info!(target: LOG_TARGET, "Starting crates database download from {source}");
 
-    let response = reqwest::Client::builder()
+    let client = reqwest::Client::builder()
         .user_agent("cargo-aprz")
         .build()
-        .into_app_err("creating HTTP client")?
-        .get(source.clone())
-        .send()
+        .into_app_err("creating HTTP client")?;
+
+    let response = crate::facts::resilient_http::resilient_get(&client, source.as_str())
         .await
         .into_app_err("starting crates database dump download")?;
 
@@ -429,7 +450,6 @@ async fn prep_tables(
 
     let (tx, rx) = mpsc::channel::<Result<Bytes>>(NUM_CHANNEL_BUFFERS);
     let processing_progress = Arc::clone(&progress);
-    let tables_root = tables_root.as_ref().to_path_buf();
     let processing_handle =
         tokio::task::spawn_blocking(move || process_download(rx, &tables_root, max_ttl, now, processing_progress.as_ref()));
     let mut stream = response.bytes_stream();

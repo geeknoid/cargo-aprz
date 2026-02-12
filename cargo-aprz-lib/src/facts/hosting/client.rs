@@ -103,9 +103,9 @@ impl Client {
 
     /// Make an API call and classify the result
     pub async fn api_call(&self, url: &str) -> HostingApiResult<reqwest::Response> {
-        let resp = match self.client.get(url).send().await {
+        let resp = match crate::facts::resilient_http::resilient_get(&self.client, url).await {
             Ok(r) => r,
-            Err(e) => return HostingApiResult::Failed(e.into(), None),
+            Err(e) => return HostingApiResult::Failed(e, None),
         };
 
         // Extract rate limit info from response headers before checking status
