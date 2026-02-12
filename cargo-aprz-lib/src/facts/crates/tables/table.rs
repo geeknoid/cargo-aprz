@@ -104,9 +104,8 @@ pub trait Table: Sized {
         buf_writer.write_all(&timestamp.to_le_bytes())?;
         buf_writer.flush()?;
 
-        // Return the file handle - it's open with read+write so it can be memory-mapped
+        // Return the file handle - it's open with read+write so it can be memory-mapped.
         let file = buf_writer.into_inner()?;
-        file.sync_all()?;
         Ok(file)
     }
 

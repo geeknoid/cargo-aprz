@@ -13,9 +13,9 @@ pub struct RowWriter<'a, W: Write> {
 }
 
 impl<'a, W: Write> RowWriter<'a, W> {
-    pub const fn new(writer: &'a mut W) -> Self {
+    pub fn new(writer: &'a mut W) -> Self {
         Self {
-            buffer: Vec::new(),
+            buffer: Vec::with_capacity(256),
             writer,
             row_count: 0,
         }
