@@ -1,4 +1,3 @@
-use super::RowIter;
 use super::{RowReader, RowWriter};
 use crate::Result;
 use chrono::{DateTime, TimeZone, Utc};
@@ -112,7 +111,7 @@ pub trait Table: Sized {
     }
 
     // Runtime data access
-    fn iter(&self) -> RowIter<'_, Self::Row<'_>, Self::Index>;
+    fn iter(&self) -> impl Iterator<Item = (Self::Row<'_>, Self::Index)>;
     fn get(&self, index: Self::Index) -> Self::Row<'_>;
     fn len(&self) -> usize;
     fn timestamp(&self) -> DateTime<Utc>;
@@ -180,7 +179,7 @@ macro_rules! define_table {
                     Ok(Self { mmap, count, timestamp })
                 }
 
-                fn iter(&self) -> super::RowIter<'_, Self::Row<'_>, Self::Index> {
+                fn iter(&self) -> impl Iterator<Item = (Self::Row<'_>, Self::Index)> {
                     super::RowIter::new(
                         super::RowReader::new(&self.mmap[super::TABLE_HEADER_SIZE..]),
                         Self::read_row,

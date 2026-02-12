@@ -2,15 +2,15 @@ use super::RowReader;
 use core::fmt::{Debug, Formatter, Result as FmtResult};
 use core::ptr::from_ref;
 
-pub struct RowIter<'a, Row, Index> {
+pub struct RowIter<'a, Row, Index, F> {
     reader: RowReader<'a>,
-    read_fn: fn(&mut RowReader<'a>) -> Row,
+    read_fn: F,
     rows_remaining: u64,
-    _phantom: core::marker::PhantomData<Index>,
+    _phantom: core::marker::PhantomData<fn() -> (Row, Index)>,
 }
 
-impl<'a, Row, Index> RowIter<'a, Row, Index> {
-    pub(super) const fn new(reader: RowReader<'a>, read_fn: fn(&mut RowReader<'a>) -> Row, num_rows: u64) -> Self {
+impl<'a, Row, Index, F> RowIter<'a, Row, Index, F> {
+    pub(super) const fn new(reader: RowReader<'a>, read_fn: F, num_rows: u64) -> Self {
         Self {
             reader,
             read_fn,
@@ -20,7 +20,7 @@ impl<'a, Row, Index> RowIter<'a, Row, Index> {
     }
 }
 
-impl<Row, Index: From<usize>> Iterator for RowIter<'_, Row, Index> {
+impl<'a, Row, Index: From<usize>, F: Fn(&mut RowReader<'a>) -> Row> Iterator for RowIter<'a, Row, Index, F> {
     type Item = (Row, Index);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -43,7 +43,7 @@ impl<Row, Index: From<usize>> Iterator for RowIter<'_, Row, Index> {
     }
 }
 
-impl<Row, Index> Debug for RowIter<'_, Row, Index> {
+impl<Row, Index, F> Debug for RowIter<'_, Row, Index, F> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.debug_struct("RowIter")
             .field("reader", &self.reader)

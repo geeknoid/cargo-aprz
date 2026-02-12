@@ -264,7 +264,7 @@ fn read_row_lean(reader: &mut super::RowReader<'_>) -> VersionRowLean {
 impl VersionsTable {
     /// Returns a lean iterator that only deserializes `id` and `crate_id` per row,
     /// skipping all string fields (no UTF-8 validation) and version parsing.
-    pub fn iter_lean(&self) -> super::RowIter<'_, VersionRowLean, VersionsTableIndex> {
+    pub fn iter_lean(&self) -> impl Iterator<Item = (VersionRowLean, VersionsTableIndex)> {
         super::RowIter::new(
             super::RowReader::new(&self.mmap[super::TABLE_HEADER_SIZE..]),
             read_row_lean,

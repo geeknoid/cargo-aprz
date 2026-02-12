@@ -121,6 +121,7 @@ ra_ap_syntax = { version = "0.0.319", default-features = false }
 regex = { version = "1.12.2", default-features = false, features = ["std", "unicode-perl"] }
 reqwest = { version = "0.13.1", default-features = false, features = ["json", "rustls", "stream"] }
 rust_xlsxwriter = { version = "0.93.0", default-features = false, features = ["zlib"] }
+rustc-hash = { version = "2.1.1", default-features = false, features = ["std"] }
 rustdoc-types-v50 = { package = "rustdoc-types", version = "0.50.0", default-features = false }
 rustdoc-types-v51 = { package = "rustdoc-types", version = "0.51.0", default-features = false }
 rustdoc-types-v52 = { package = "rustdoc-types", version = "0.52.0", default-features = false }
@@ -129,7 +130,6 @@ rustdoc-types-v54 = { package = "rustdoc-types", version = "0.54.0", default-fea
 rustdoc-types-v55 = { package = "rustdoc-types", version = "0.55.0", default-features = false }
 rustdoc-types-v56 = { package = "rustdoc-types", version = "0.56.0", default-features = false }
 rustdoc-types-v57 = { package = "rustdoc-types", version = "0.57.0", default-features = false }
-rustc-hash = { version = "2.1.1", default-features = false, features = ["std"] }
 rustsec = { version = "0.32.0", default-features = true }
 seatbelt = { version = "0.2.0", default-features = false, features = ["retry", "timeout"] }
 semver = { version = "1.0.27", default-features = false, features = ["serde"] }
