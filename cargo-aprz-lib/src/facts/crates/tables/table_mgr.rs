@@ -76,7 +76,7 @@ macro_rules! define_tables {
                 let finished_tables = Arc::new(core::sync::atomic::AtomicU64::new(0));
                 let finished_tables_clone = Arc::clone(&finished_tables);
                 progress.set_determinate(Box::new(move || {
-                    (NUM_TABLES, finished_tables_clone.load(Ordering::Relaxed), "Opening tables".to_string())
+                    (NUM_TABLES, finished_tables_clone.load(Ordering::Relaxed), "FOpening tables".to_string())
                 }));
 
                 $(

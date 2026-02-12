@@ -64,10 +64,10 @@ define_table! {
                 writer.write_str_as_u64(csv_row.id)?;
                 writer.write_str_as_u64(csv_row.kind)?;
                 writer.write_str_as_bool(csv_row.default_features)?;
-                writer.write_str(csv_row.explicit_name)?;
+                writer.write_str(csv_row.explicit_name);
                 writer.write_str_as_bool(csv_row.optional)?;
-                writer.write_str(csv_row.req)?;
-                writer.write_str(csv_row.target)?;
+                writer.write_str(csv_row.req);
+                writer.write_str(csv_row.target);
             }
 
             Ok(())

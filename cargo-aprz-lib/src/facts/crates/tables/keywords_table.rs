@@ -17,7 +17,7 @@ define_table! {
     keywords {
         fn write_row(csv_row: &CsvKeywordRow<'a>, writer: &mut RowWriter<impl Write>) -> Result<()> {
             writer.write_str_as_u64(csv_row.id)?;
-            writer.write_str(csv_row.keyword)?;
+            writer.write_str(csv_row.keyword);
 
             #[cfg(all_fields)]
             {

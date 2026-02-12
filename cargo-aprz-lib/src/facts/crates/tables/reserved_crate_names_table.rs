@@ -9,7 +9,7 @@ define_rows! {
 define_table! {
     reserved_crate_names {
         fn write_row(csv_row: &CsvReservedCrateNamesRow<'a>, writer: &mut RowWriter<impl Write>) -> Result<()> {
-            writer.write_str(csv_row.name)?;
+            writer.write_str(csv_row.name);
             Ok(())
         }
 

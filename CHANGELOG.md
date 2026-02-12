@@ -1,5 +1,11 @@
 # cargo-aprz
 
+## 0.6.0 TBD
+
+### Changed
+
+- Improve crate table download perf.
+
 ## 0.5.0 2026-02-12
 
 ### Added

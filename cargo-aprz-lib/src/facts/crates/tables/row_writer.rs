@@ -39,17 +39,15 @@ impl<'a, W: Write> RowWriter<'a, W> {
     }
 
     #[inline]
-    pub fn write_u64(&mut self, value: u64) -> Result<()> {
-        let mut buf = [0u8; 17];
-        let bytes_written = vlen::encode(&mut buf[..], value).map_err(|e| app_err!("unable to encode vlen u64: {e}"))?;
+    pub fn write_u64(&mut self, value: u64) {
+        let mut buf = [0u8; 9];
+        let bytes_written = vlen::encode_u64(&mut buf, value);
         self.buffer.extend_from_slice(&buf[..bytes_written]);
-        Ok(())
     }
 
-    pub fn write_str(&mut self, s: &str) -> Result<()> {
-        self.write_u64(s.len() as u64)?;
+    pub fn write_str(&mut self, s: &str) {
+        self.write_u64(s.len() as u64);
         self.buffer.extend_from_slice(s.as_bytes());
-        Ok(())
     }
 
     #[inline]
@@ -57,24 +55,22 @@ impl<'a, W: Write> RowWriter<'a, W> {
         self.buffer.push(u8::from(value));
     }
 
-    pub fn write_optional_u64(&mut self, value: Option<u64>) -> Result<()> {
+    pub fn write_optional_u64(&mut self, value: Option<u64>) {
         if let Some(v) = value {
             self.write_byte(1);
-            self.write_u64(v)
+            self.write_u64(v);
         } else {
             self.write_byte(0);
-            Ok(())
         }
     }
 
     #[cfg(all_fields)]
-    pub fn write_optional_str(&mut self, s: &str) -> Result<()> {
+    pub fn write_optional_str(&mut self, s: &str) {
         if s.is_empty() {
             self.write_byte(0);
-            Ok(())
         } else {
             self.write_byte(1);
-            self.write_str(s)
+            self.write_str(s);
         }
     }
 
@@ -90,7 +86,8 @@ impl<'a, W: Write> RowWriter<'a, W> {
 
     pub fn write_str_as_u64(&mut self, s: &str) -> Result<()> {
         let value = s.parse::<u64>().into_app_err_with(|| format!("parsing u64 from '{s}'"))?;
-        self.write_u64(value)
+        self.write_u64(value);
+        Ok(())
     }
 
     #[cfg(all_fields)]
@@ -102,29 +99,33 @@ impl<'a, W: Write> RowWriter<'a, W> {
 
     pub fn write_str_as_datetime(&mut self, s: &str) -> Result<()> {
         let timestamp = parse_pg_timestamp(s)?;
-        self.write_u64(timestamp)?;
+        self.write_u64(timestamp);
         Ok(())
     }
 
     pub fn write_str_as_date(&mut self, s: &str) -> Result<()> {
         let timestamp = parse_pg_date(s)?;
-        self.write_u64(timestamp)
+        self.write_u64(timestamp);
+        Ok(())
     }
 
     pub fn write_str_as_url(&mut self, s: &str) -> Result<()> {
         if s.is_empty() {
-            return self.write_str(s);
+            self.write_str(s);
+            return Ok(());
         }
 
         // Try parsing the URL as-is
         if Url::parse(s).is_ok() {
-            return self.write_str(s);
+            self.write_str(s);
+            return Ok(());
         }
 
         // If that fails, try prepending https://
         let with_https = format!("https://{s}");
         if Url::parse(&with_https).is_ok() {
-            return self.write_str(&with_https);
+            self.write_str(&with_https);
+            return Ok(());
         }
 
         // Both attempts failed, return error
@@ -138,7 +139,8 @@ impl<'a, W: Write> RowWriter<'a, W> {
         }
 
         let v = s.parse::<u64>().into_app_err_with(|| format!("parsing u64 from '{s}'"))?;
-        self.write_optional_u64(Some(v))
+        self.write_optional_u64(Some(v));
+        Ok(())
     }
 
     pub fn write_str_as_bool(&mut self, s: &str) -> Result<()> {
@@ -154,11 +156,11 @@ impl<'a, W: Write> RowWriter<'a, W> {
 
     pub fn write_str_as_version(&mut self, s: &str) -> Result<()> {
         let version = Version::parse(s).into_app_err_with(|| format!("parsing version '{s}'"))?;
-        self.write_u64(version.major)?;
-        self.write_u64(version.minor)?;
-        self.write_u64(version.patch)?;
-        self.write_str(version.pre.as_str())?;
-        self.write_str(version.build.as_str())?;
+        self.write_u64(version.major);
+        self.write_u64(version.minor);
+        self.write_u64(version.patch);
+        self.write_str(version.pre.as_str());
+        self.write_str(version.build.as_str());
         Ok(())
     }
 
@@ -170,15 +172,15 @@ impl<'a, W: Write> RowWriter<'a, W> {
             .ok_or_else(|| app_err!("invalid PostgreSQL array format: expected '{{...}}', got '{s}'"))?;
 
         if inner.is_empty() {
-            self.write_u64(0)
+            self.write_u64(0);
         } else {
             let count = inner.matches(',').count() + 1;
-            self.write_u64(count as u64)?;
+            self.write_u64(count as u64);
             for element in inner.split(',') {
-                self.write_str(element)?;
+                self.write_str(element);
             }
-            Ok(())
         }
+        Ok(())
     }
 }
 

@@ -24,15 +24,15 @@ define_table! {
     categories {
         fn write_row(csv_row: &CsvCategoryRow<'a>, writer: &mut RowWriter<impl Write>) -> Result<()> {
             writer.write_str_as_u64(csv_row.id)?;
-            writer.write_str(csv_row.slug)?;
+            writer.write_str(csv_row.slug);
 
             #[cfg(all_fields)]
             {
-                writer.write_str(csv_row.category)?;
-                writer.write_str(csv_row.description)?;
+                writer.write_str(csv_row.category);
+                writer.write_str(csv_row.description);
                 writer.write_str_as_u64(csv_row.crates_cnt)?;
                 writer.write_str_as_datetime(csv_row.created_at)?;
-                writer.write_str(csv_row.path)?;
+                writer.write_str(csv_row.path);
             }
 
             Ok(())

@@ -16,8 +16,8 @@ define_table! {
     users {
         fn write_row(csv_row: &CsvUserRow<'a>, writer: &mut RowWriter<impl Write>) -> Result<()> {
             writer.write_str_as_u64(csv_row.id)?;
-            writer.write_str(csv_row.gh_login)?;
-            writer.write_str(csv_row.name)?;
+            writer.write_str(csv_row.gh_login);
+            writer.write_str(csv_row.name);
 
             #[cfg(all_fields)]
             {
@@ -27,8 +27,8 @@ define_table! {
                     Some(csv_row.gh_id.parse::<u64>()?)
                 };
 
-                writer.write_optional_u64(gh_id)?;
-                writer.write_str(csv_row.gh_avatar)?;
+                writer.write_optional_u64(gh_id);
+                writer.write_str(csv_row.gh_avatar);
             }
 
             Ok(())

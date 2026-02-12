@@ -17,13 +17,13 @@ define_table! {
     teams {
         fn write_row(csv_row: &CsvTeamRow<'a>, writer: &mut RowWriter<impl Write>) -> Result<()> {
             writer.write_str_as_u64(csv_row.id)?;
-            writer.write_str(csv_row.login)?;
-            writer.write_str(csv_row.name)?;
+            writer.write_str(csv_row.login);
+            writer.write_str(csv_row.name);
 
             #[cfg(all_fields)]
             {
                 writer.write_optional_str_as_u64(csv_row.org_id)?;
-                writer.write_str(csv_row.avatar)?;
+                writer.write_str(csv_row.avatar);
                 writer.write_str_as_u64(csv_row.github_id)?;
             }
 

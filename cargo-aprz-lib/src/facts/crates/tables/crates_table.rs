@@ -66,7 +66,7 @@ impl CrateRow<'_> {
 define_table! {
     crates {
         fn write_row(csv_row: &CsvCrateRow<'a>, writer: &mut RowWriter<impl Write>) -> Result<()> {
-            writer.write_str(csv_row.name)?;
+            writer.write_str(csv_row.name);
             writer.write_str_as_u64(csv_row.id)?;
             writer.write_str_as_datetime(csv_row.created_at)?;
 
@@ -76,14 +76,14 @@ define_table! {
                     csv_row.name,
                     e
                 );
-                writer.write_str("")?;
+                writer.write_str("");
             }
 
             writer.write_str_as_datetime(csv_row.updated_at)?;
 
             #[cfg(all_fields)]
             {
-                writer.write_str(csv_row.description)?;
+                writer.write_str(csv_row.description);
 
                 if let Err(e) = writer.write_str_as_url(csv_row.documentation) {
                     log::debug!(target: LOG_TARGET,
@@ -91,7 +91,7 @@ define_table! {
                         csv_row.name,
                         e
                     );
-                    writer.write_str("")?;
+                    writer.write_str("");
                 }
 
                 if let Err(e) = writer.write_str_as_url(csv_row.homepage) {
@@ -100,10 +100,10 @@ define_table! {
                         csv_row.name,
                         e
                     );
-                    writer.write_str("")?;
+                    writer.write_str("");
                 }
 
-                writer.write_str(csv_row.readme)?;
+                writer.write_str(csv_row.readme);
                 writer.write_optional_str_as_u64(csv_row.max_features)?;
                 writer.write_optional_str_as_u64(csv_row.max_upload_size)?;
                 writer.write_str_as_bool(csv_row.trustpub_only)?;

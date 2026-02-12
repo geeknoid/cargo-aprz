@@ -129,10 +129,10 @@ define_table! {
             writer.write_optional_str_as_u64(csv_row.edition)?;
             writer.write_str_as_datetime(csv_row.created_at)?;
             writer.write_str_as_datetime(csv_row.updated_at)?;
-            writer.write_str(csv_row.description)?;
-            writer.write_str(csv_row.features)?;
-            writer.write_str(csv_row.license)?;
-            writer.write_str(csv_row.rust_version)?;
+            writer.write_str(csv_row.description);
+            writer.write_str(csv_row.features);
+            writer.write_str(csv_row.license);
+            writer.write_str(csv_row.rust_version);
             writer.write_str_as_bool(csv_row.yanked)?;
 
             if let Err(e) = writer.write_str_as_url(csv_row.documentation) {
@@ -142,7 +142,7 @@ define_table! {
                     csv_row.crate_id,
                     e
                 );
-                writer.write_str("")?;
+                writer.write_str("");
             }
 
             if let Err(e) = writer.write_str_as_url(csv_row.homepage) {
@@ -152,7 +152,7 @@ define_table! {
                     csv_row.crate_id,
                     e
                 );
-                writer.write_str("")?;
+                writer.write_str("");
             }
 
             #[cfg(all_fields)]
@@ -166,11 +166,11 @@ define_table! {
                         csv_row.crate_id,
                         e
                     );
-                    writer.write_str("")?;
+                    writer.write_str("");
                 }
-                writer.write_optional_str(csv_row.links)?;
-                writer.write_str(csv_row.bin_names)?;
-                writer.write_optional_str(csv_row.checksum)?;
+                writer.write_optional_str(csv_row.links);
+                writer.write_str(csv_row.bin_names);
+                writer.write_optional_str(csv_row.checksum);
                 writer.write_optional_str_as_u64(csv_row.crate_size)?;
                 writer.write_optional_str_as_u64(csv_row.published_by)?;
                 writer.write_str_as_bool(csv_row.has_lib)?;
