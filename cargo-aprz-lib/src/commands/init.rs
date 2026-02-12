@@ -24,7 +24,7 @@ pub fn init_config<H: Host>(host: &mut H, args: &InitArgs) -> Result<()> {
     } else {
         let mut metadata_cmd = MetadataCommand::new();
         let _ = metadata_cmd.manifest_path(&args.manifest_path);
-        let metadata = metadata_cmd.exec().into_app_err("unable to retrieve workspace metadata")?;
+        let metadata = metadata_cmd.exec().into_app_err("retrieving workspace metadata")?;
         metadata.workspace_root.join("aprz.toml")
     };
 

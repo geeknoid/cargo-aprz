@@ -87,7 +87,7 @@ macro_rules! define_tables {
 
                     $(#[$meta])*
                     let table = <$type>::open(&tables_root, max_ttl, now)
-                        .into_app_err(concat!("unable to open ", stringify!($field), " table"))?;
+                        .into_app_err(concat!("opening ", stringify!($field), " table"))?;
                     $(#[$meta])*
                     let $field = Arc::new(table);
 
@@ -136,7 +136,7 @@ macro_rules! define_tables {
                     $(#[$meta])*
                     // Get file size for mapping
                     let metadata = file.metadata()
-                        .into_app_err_with(|| format!("unable to get metadata for {}", <$type>::TABLE_NAME))?;
+                        .into_app_err_with(|| format!("getting metadata for {}", <$type>::TABLE_NAME))?;
                     $(#[$meta])*
                     #[expect(clippy::cast_possible_truncation, reason = "Table files won't exceed usize::MAX on any supported platform")]
                     let file_size = metadata.len() as usize;
@@ -147,11 +147,11 @@ macro_rules! define_tables {
                     #[expect(clippy::multiple_unsafe_ops_per_block, reason = "All operations are part of the same logical mmap creation sequence")]
                     let mmap = unsafe {
                         MmapOptions::new(file_size)
-                            .into_app_err_with(|| format!("unable to create mmap options for {}", <$type>::TABLE_NAME))?
+                            .into_app_err_with(|| format!("creating mmap options for {}", <$type>::TABLE_NAME))?
                             .with_flags(MmapFlags::TRANSPARENT_HUGE_PAGES | MmapFlags::SEQUENTIAL)
                             .with_file(file, 0)
                             .map()
-                            .into_app_err_with(|| format!("unable to memory-map {}", <$type>::TABLE_NAME))?
+                            .into_app_err_with(|| format!("memory-mapping {}", <$type>::TABLE_NAME))?
                     };
 
                     $(#[$meta])*
@@ -161,7 +161,7 @@ macro_rules! define_tables {
                     let open_start = Instant::now();
                     $(#[$meta])*
                     let table = <$type>::open_with(mmap, max_ttl, now)
-                        .into_app_err(concat!("unable to open ", stringify!($field), " table"))?;
+                        .into_app_err(concat!("opening ", stringify!($field), " table"))?;
                     $(#[$meta])*
                     log::debug!(target: LOG_TARGET, "Finished validating {} in {:.3}s", <$type>::TABLE_NAME, open_start.elapsed().as_secs_f64());
 
@@ -204,12 +204,12 @@ macro_rules! define_tables {
                         if e.raw_os_error() == Some(32) {
                             any_locked = true;
                         } else {
-                            return Err(e).into_app_err_with(|| format!("unable to remove {}", table_path.display()));
+                            return Err(e).into_app_err_with(|| format!("removing {}", table_path.display()));
                         }
 
                         #[cfg(not(windows))]
                         {
-                            return Err(e).into_app_err_with(|| format!("unable to remove {}", table_path.display()));
+                            return Err(e).into_app_err_with(|| format!("removing {}", table_path.display()));
                         }
                     }
                 }
@@ -393,11 +393,11 @@ async fn prep_tables(
     let response = reqwest::Client::builder()
         .user_agent("cargo-aprz")
         .build()
-        .into_app_err("unable to create HTTP client")?
+        .into_app_err("creating HTTP client")?
         .get(source.clone())
         .send()
         .await
-        .into_app_err("unable to start downloading crates database dump")?;
+        .into_app_err("starting crates database dump download")?;
 
     if !response.status().is_success() {
         bail!("unable to download crates database dump: HTTP {}", response.status());

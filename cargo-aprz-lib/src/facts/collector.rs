@@ -180,7 +180,7 @@ fn create_cache_dir(base_path: impl AsRef<Path>, name: impl AsRef<str>) -> Resul
     #[cfg(windows)]
     let needs_creation = !cache_path.exists();
 
-    fs::create_dir_all(&cache_path).into_app_err_with(|| format!("unable to create `{name_str}` cache directory"))?;
+    fs::create_dir_all(&cache_path).into_app_err_with(|| format!("creating `{name_str}` cache directory"))?;
 
     // Disable NTFS compression on crates directory for better memory-mapped file performance
     #[cfg(windows)]

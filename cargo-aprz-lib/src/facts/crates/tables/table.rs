@@ -39,10 +39,10 @@ pub trait Table: Sized {
 
     fn open(tables_root: impl AsRef<Path>, max_ttl: Duration, now: DateTime<Utc>) -> Result<Self> {
         let path = tables_root.as_ref().join(Self::TABLE_NAME);
-        let file = File::open(&path).into_app_err_with(|| format!("unable to open table file: {}", path.display()))?;
+        let file = File::open(&path).into_app_err_with(|| format!("opening table file: {}", path.display()))?;
 
         // Get file size for mapping
-        let metadata = file.metadata().into_app_err("unable to get file metadata")?;
+        let metadata = file.metadata().into_app_err("getting file metadata")?;
         #[expect(
             clippy::cast_possible_truncation,
             reason = "Table files won't exceed usize::MAX on any supported platform"
@@ -56,7 +56,7 @@ pub trait Table: Sized {
                 .with_flags(MmapFlags::TRANSPARENT_HUGE_PAGES | MmapFlags::SEQUENTIAL)
                 .with_file(&file, 0)
                 .map()
-                .into_app_err("unable to memory-map table file")?
+                .into_app_err("memory-mapping table file")?
         };
 
         Self::open_with(mmap, max_ttl, now)
@@ -73,7 +73,7 @@ pub trait Table: Sized {
             .create(true)
             .truncate(true)
             .open(&path)
-            .into_app_err_with(|| format!("unable to create table file: {}", path.display()))?;
+            .into_app_err_with(|| format!("creating table file: {}", path.display()))?;
 
         // Use a 1MB buffer for better performance with large tables
         let mut buf_writer = BufWriter::with_capacity(1024 * 1024, file);

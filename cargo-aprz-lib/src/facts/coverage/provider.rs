@@ -106,7 +106,7 @@ impl Provider {
             }
             Err(e) => {
                 return ProviderResult::Error(Arc::new(
-                    e.enrich_with(|| format!("could not fetch coverage for repository '{repo_spec}'")),
+                    e.enrich_with(|| format!("fetching coverage for repository '{repo_spec}'")),
                 ));
             }
         };
@@ -196,7 +196,7 @@ pub async fn get_code_coverage(client: &reqwest::Client, repo_spec: &RepoSpec, b
         let coverage = percent_str
             .parse::<f64>()
             .inspect_err(|e| log::debug!(target: LOG_TARGET, "Could not parse coverage percentage '{percent_str}': {e:#}"))
-            .into_app_err_with(|| format!("could not parse coverage percentage '{percent_str}'"))?;
+            .into_app_err_with(|| format!("parsing coverage percentage '{percent_str}'"))?;
 
         log::debug!(target: LOG_TARGET, "Found coverage: {coverage}%");
         return Ok(Some(coverage));

@@ -47,7 +47,7 @@ impl Provider {
         } else {
             download_db(&repo_path, progress.as_ref())
                 .await
-                .into_app_err("unable to download the advisory database")?;
+                .into_app_err("downloading the advisory database")?;
             let timestamp = now;
             cache_doc::save(&LastSynced { timestamp }, &sync_path)?;
             timestamp

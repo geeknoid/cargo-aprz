@@ -89,13 +89,13 @@ impl<'a, W: Write> RowWriter<'a, W> {
     }
 
     pub fn write_str_as_u64(&mut self, s: &str) -> Result<()> {
-        let value = s.parse::<u64>().into_app_err_with(|| format!("unable to parse u64 from '{s}'"))?;
+        let value = s.parse::<u64>().into_app_err_with(|| format!("parsing u64 from '{s}'"))?;
         self.write_u64(value)
     }
 
     #[cfg(all_fields)]
     pub fn write_str_as_byte(&mut self, s: &str) -> Result<()> {
-        let value = s.parse().into_app_err_with(|| format!("unable to parse u8 from '{s}'"))?;
+        let value = s.parse().into_app_err_with(|| format!("parsing u8 from '{s}'"))?;
         self.write_byte(value);
         Ok(())
     }
@@ -137,7 +137,7 @@ impl<'a, W: Write> RowWriter<'a, W> {
             return Ok(());
         }
 
-        let v = s.parse::<u64>().into_app_err_with(|| format!("unable to parse u64 from '{s}'"))?;
+        let v = s.parse::<u64>().into_app_err_with(|| format!("parsing u64 from '{s}'"))?;
         self.write_optional_u64(Some(v))
     }
 
@@ -153,7 +153,7 @@ impl<'a, W: Write> RowWriter<'a, W> {
     }
 
     pub fn write_str_as_version(&mut self, s: &str) -> Result<()> {
-        let version = Version::parse(s).into_app_err_with(|| format!("unable to parse version '{s}'"))?;
+        let version = Version::parse(s).into_app_err_with(|| format!("parsing version '{s}'"))?;
         self.write_u64(version.major)?;
         self.write_u64(version.minor)?;
         self.write_u64(version.patch)?;
@@ -184,7 +184,7 @@ impl<'a, W: Write> RowWriter<'a, W> {
 fn parse_pg_timestamp(s: &str) -> Result<u64> {
     let dt = DateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S%.f%#z")
         .or_else(|_| DateTime::parse_from_rfc3339(s))
-        .into_app_err_with(|| format!("unable to parse timestamp '{s}'"))?
+        .into_app_err_with(|| format!("parsing timestamp '{s}'"))?
         .with_timezone(&Utc);
     Ok(dt.timestamp().max(0).cast_unsigned())
 }
@@ -192,7 +192,7 @@ fn parse_pg_timestamp(s: &str) -> Result<u64> {
 fn parse_pg_date(s: &str) -> Result<u64> {
     Ok(u64::from(
         chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-            .into_app_err_with(|| format!("unable to parse date '{s}'"))?
+            .into_app_err_with(|| format!("parsing date '{s}'"))?
             .to_epoch_days()
             .max(0)
             .cast_unsigned(),

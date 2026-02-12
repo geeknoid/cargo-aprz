@@ -69,7 +69,7 @@ pub async fn process_dependencies<H: Host>(host: &mut H, args: &DepsArgs) -> Res
         }
     }
 
-    let metadata = common.metadata_cmd.exec().into_app_err("unable to retrieve workspace metadata")?;
+    let metadata = common.metadata_cmd.exec().into_app_err("retrieving workspace metadata")?;
     let all_packages: HashMap<_, _> = metadata.packages.iter().map(|p| (&p.id, p)).collect();
     let resolve_index: HashMap<&PackageId, &Node> = metadata
         .resolve

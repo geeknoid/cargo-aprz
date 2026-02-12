@@ -43,7 +43,7 @@ fn validate_config_inner(workspace_root: &Utf8Path, config_path: Option<&Utf8Pat
         // Check if any expression evaluation failed
         for outcome in &appraisal.expression_outcomes {
             if let ExpressionDisposition::Failed(msg) = &outcome.disposition {
-                return Err(app_err!("Expression '{}' failed: {msg}", outcome.name));
+                return Err(app_err!("expression '{}' failed: {msg}", outcome.name));
             }
         }
     }
@@ -63,7 +63,7 @@ pub fn validate_config<H: Host>(host: &mut H, args: &ValidateArgs) -> Result<()>
     } else {
         let mut metadata_cmd = MetadataCommand::new();
         let _ = metadata_cmd.manifest_path(&args.manifest_path);
-        let metadata = metadata_cmd.exec().into_app_err("unable to retrieve workspace metadata")?;
+        let metadata = metadata_cmd.exec().into_app_err("retrieving workspace metadata")?;
         workspace_root = metadata.workspace_root;
         &workspace_root
     };

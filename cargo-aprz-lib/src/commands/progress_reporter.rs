@@ -90,7 +90,7 @@ impl Progress for ProgressReporter {
         self.bar.set_style(
             ProgressStyle::default_bar()
                 .template(DETERMINATE_TEMPLATE)
-                .expect("Could not create progress bar style")
+                .expect("could not create progress bar style")
                 .progress_chars("=> "),
         );
     }
@@ -108,7 +108,7 @@ impl Progress for ProgressReporter {
         self.bar.set_style(
             ProgressStyle::default_spinner()
                 .template(INDETERMINATE_TEMPLATE)
-                .expect("Could not create progress bar style")
+                .expect("could not create progress bar style")
                 .tick_strings(&[
                     "=                        ", // 12 spaces, char, 12 spaces = 25 total
                     "==                       ",

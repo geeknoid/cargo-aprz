@@ -129,7 +129,7 @@ impl<'a, H: super::Host> Common<'a, H> {
         let _ = metadata_cmd.manifest_path(&args.manifest_path);
 
         // Execute metadata command once and use it for both cache and config paths
-        let metadata = metadata_cmd.exec().into_app_err("unable to retrieve workspace metadata")?;
+        let metadata = metadata_cmd.exec().into_app_err("retrieving workspace metadata")?;
 
         // Use workspace_root for config base path
         let config_base_path = metadata.workspace_root;
@@ -142,7 +142,7 @@ impl<'a, H: super::Host> Common<'a, H> {
             cache_path.as_std_path().to_path_buf()
         } else {
             BaseDirs::new()
-                .into_app_err("Could not determine cache directory")?
+                .into_app_err("could not determine cache directory")?
                 .cache_dir()
                 .join("cargo-aprz")
         };

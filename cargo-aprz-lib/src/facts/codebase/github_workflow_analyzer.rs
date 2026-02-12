@@ -30,7 +30,7 @@ pub fn sniff_github_workflows(repo_path: impl AsRef<Path>) -> Result<GitHubWorkf
     let mut file_count = 0;
 
     for entry_result in walkdir::WalkDir::new(&workflows_dir).follow_links(false) {
-        let entry = entry_result.into_app_err("could not walk workflows directory")?;
+        let entry = entry_result.into_app_err("walking workflows directory")?;
 
         // Skip directories
         if entry.file_type().is_dir() {
@@ -55,7 +55,7 @@ pub fn sniff_github_workflows(repo_path: impl AsRef<Path>) -> Result<GitHubWorkf
         }
 
         let file =
-            fs::File::open(entry.path()).into_app_err_with(|| format!("could not open workflow file '{}'", entry.path().display()))?;
+            fs::File::open(entry.path()).into_app_err_with(|| format!("opening workflow file '{}'", entry.path().display()))?;
         let reader = BufReader::new(file);
 
         for line in reader.lines().map_while(Result::ok) {

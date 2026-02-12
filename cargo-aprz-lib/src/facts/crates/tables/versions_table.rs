@@ -119,7 +119,7 @@ impl VersionRow<'_> {
 define_table! {
     versions {
         fn write_row(csv_row: &CsvVersionRow<'a>, writer: &mut RowWriter<impl Write>) -> Result<()> {
-            let _ = serde_json::from_str::<BTreeMap<CompactString, Vec<CompactString>>>(csv_row.features).into_app_err("invalid feature map")?;
+            let _ = serde_json::from_str::<BTreeMap<CompactString, Vec<CompactString>>>(csv_row.features).into_app_err("parsing feature map")?;
 
             writer.write_str_as_u64(csv_row.id)?;
             writer.write_str_as_u64(csv_row.crate_id)?;

@@ -94,7 +94,7 @@ impl<'de> Deserialize<'de> for Expression {
 
         let data = ExpressionData::deserialize(deserializer)?;
         let program = Program::compile(&data.expression)
-            .map_err(|e| D::Error::custom(format!("Could not parse expression '{}': {e}", data.name)))?;
+            .map_err(|e| D::Error::custom(format!("could not parse expression '{}': {e}", data.name)))?;
 
         Ok(Self {
             name: data.name,
@@ -112,7 +112,7 @@ impl Expression {
     pub(crate) fn new(name: &str, description: Option<&str>, expression: &str, points: Option<u32>) -> crate::Result<Self> {
         use ohno::app_err;
 
-        let program = Program::compile(expression).map_err(|e| app_err!("Could not parse expression '{name}': {e}"))?;
+        let program = Program::compile(expression).map_err(|e| app_err!("could not parse expression '{name}': {e}"))?;
 
         Ok(Self {
             name: Arc::from(name),
@@ -207,7 +207,7 @@ mod tests {
         let result: Result<Expression, _> = serde_json::from_str(json);
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.to_string().contains("Could not parse expression"));
+        assert!(err.to_string().contains("could not parse expression"));
     }
 
     #[test]

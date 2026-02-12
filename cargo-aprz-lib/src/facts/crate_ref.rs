@@ -57,7 +57,7 @@ impl FromStr for CrateRef {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if let Some((name, version_str)) = s.split_once('@') {
             let version =
-                Version::parse(version_str).into_app_err_with(|| format!("invalid version '{version_str}' in crate specifier '{s}'"))?;
+                Version::parse(version_str).into_app_err_with(|| format!("parsing version '{version_str}' in crate specifier '{s}'"))?;
             Ok(Self::new(name, Some(version)))
         } else {
             Ok(Self::new(s, None))

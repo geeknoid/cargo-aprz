@@ -111,10 +111,10 @@ pub fn evaluate(
 fn evaluate_expression(program: &Program, name: &str, context: &Context) -> Result<bool> {
     match program
         .execute(context)
-        .into_app_err(format!("Could not evaluate expression '{name}'"))?
+        .into_app_err(format!("evaluating expression '{name}'"))?
     {
         Value::Bool(b) => Ok(b),
-        other => Err(app_err!("Expression '{name}' did not return a boolean, got '{other:?}' instead")),
+        other => Err(app_err!("expression '{name}' did not return a boolean, got '{other:?}' instead")),
     }
 }
 
@@ -261,7 +261,7 @@ mod tests {
     };
 
     fn eval_expr(expr: &str, metrics: &[Metric]) -> Result<bool> {
-        let program = Program::compile(expr).map_err(|e| app_err!("Could not compile expression: {e}"))?;
+        let program = Program::compile(expr).map_err(|e| app_err!("could not compile expression: {e}"))?;
         let context = build_cel_context(metrics, test_timestamp());
         evaluate_expression(&program, "test", &context)
     }

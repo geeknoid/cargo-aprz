@@ -40,7 +40,7 @@ macro_rules! generate_version_support {
 
                 log::debug!(target: LOG_TARGET, "Parsing rustdoc JSON v{} for {crate_spec}", $version);
                 let krate: rustdoc_types::Crate = serde_json::from_value(json_value)
-                    .into_app_err_with(|| format!("could not parse rustdoc JSON v{} structure for {crate_spec}", $version))?;
+                    .into_app_err_with(|| format!("parsing rustdoc JSON v{} structure for {crate_spec}", $version))?;
 
                 let index_len = krate.index.len();
                 log::debug!(target: LOG_TARGET, "Successfully parsed rustdoc JSON v{} for {crate_spec}, found {index_len} items in index", $version);
@@ -88,7 +88,7 @@ generate_version_support!("57", rustdoc_types_v57);
 pub fn calculate_docs_metrics(reader: impl Read, crate_spec: &CrateSpec, now: DateTime<Utc>) -> Result<DocsData> {
     log::debug!(target: LOG_TARGET, "Parsing rustdoc JSON for {crate_spec}");
     let json_value: serde_json::Value =
-        serde_json::from_reader(reader).into_app_err_with(|| format!("could not parse JSON for {crate_spec}"))?;
+        serde_json::from_reader(reader).into_app_err_with(|| format!("parsing JSON for {crate_spec}"))?;
 
     let format_version = json_value
         .get("format_version")

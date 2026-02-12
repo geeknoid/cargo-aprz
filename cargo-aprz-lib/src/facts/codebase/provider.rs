@@ -197,7 +197,7 @@ impl Provider {
                 ));
             }
             Ok(Err(e)) => {
-                return Err(e.enrich_with(|| format!("could not sync repository '{repo_spec}'")));
+                return Err(e.enrich_with(|| format!("syncing repository '{repo_spec}'")));
             }
             Ok(Ok(())) => {}
         }
@@ -224,10 +224,10 @@ impl Provider {
             Ok(join_result) => match join_result {
                 Ok(Ok(metadata)) => metadata,
                 Ok(Err(e)) => {
-                    return Err(e).into_app_err_with(|| format!("cargo metadata failed for repository '{repo_spec}'"));
+                    return Err(e).into_app_err_with(|| format!("running cargo metadata for repository '{repo_spec}'"));
                 }
                 Err(e) => {
-                    return Err(e).into_app_err_with(|| format!("cargo metadata task panicked for repository '{repo_spec}'"));
+                    return Err(e).into_app_err_with(|| format!("joining cargo metadata task for repository '{repo_spec}'"));
                 }
             },
         };
@@ -279,7 +279,7 @@ impl Provider {
         {
             Ok(info) => info,
             Err(e) => {
-                return Err(e).into_app_err_with(|| format!("could not analyze GitHub workflows in repository '{repo_spec}'"));
+                return Err(e).into_app_err_with(|| format!("analyzing GitHub workflows in repository '{repo_spec}'"));
             }
         };
 
@@ -383,7 +383,7 @@ impl Provider {
             return (
                 crate_spec.clone(),
                 ProviderResult::Error(Arc::new(
-                    e.enrich_with(|| format!("could not analyze source files for {crate_spec}")),
+                    e.enrich_with(|| format!("analyzing source files for {crate_spec}")),
                 )),
             );
         }
@@ -477,7 +477,7 @@ impl Provider {
 
             let task = spawn_blocking(move || {
                 let _permit = permit_res.expect("Semaphore closed");
-                let content = fs::read_to_string(&path).into_app_err_with(|| format!("could not read source file '{}'", path.display()))?;
+                let content = fs::read_to_string(&path).into_app_err_with(|| format!("reading source file '{}'", path.display()))?;
                 Ok(source_file_analyzer::analyze_source_file(&content))
             });
 

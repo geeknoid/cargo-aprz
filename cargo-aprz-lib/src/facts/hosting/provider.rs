@@ -86,7 +86,7 @@ macro_rules! unwrap_repo_result {
             HostingApiResult::RateLimited(rate_limit) => {
                 return RepoData {
                     repo_spec: $repo_spec,
-                    result: ProviderResult::Error(Arc::new(ohno::app_err!("Rate limited"))),
+                    result: ProviderResult::Error(Arc::new(ohno::app_err!("rate limited"))),
                     rate_limit: Some(rate_limit),
                     is_rate_limited: true,
                 };
@@ -95,7 +95,7 @@ macro_rules! unwrap_repo_result {
                 $(
                     log::warn!(target: LOG_TARGET, "Could not fetch {} for '{}': {:#}", $warn_operation, $repo_spec, e);
                 )?
-                let error = Arc::new(e.enrich_with(|| format!("could not fetch {} for repository '{}'", $operation, $repo_spec)));
+                let error = Arc::new(e.enrich_with(|| format!("fetching {} for repository '{}'", $operation, $repo_spec)));
                 return RepoData {
                     repo_spec: $repo_spec,
                     result: ProviderResult::Error(error),
@@ -236,7 +236,7 @@ impl Provider {
 
         // Create error results for crates from unknown hosts
         let unknown_host_results = unknown_host_crates.into_iter().map(|(crate_spec, host_domain)| {
-            let error = Arc::new(ohno::app_err!("Unsupported hosting provider: {}", host_domain));
+            let error = Arc::new(ohno::app_err!("unsupported hosting provider: {}", host_domain));
             (crate_spec, ProviderResult::Error(error))
         });
 

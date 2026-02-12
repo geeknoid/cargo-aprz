@@ -31,18 +31,18 @@ pub async fn acquire_cache_lock(cache_dir: &Path) -> Result<CacheLockGuard> {
         .create(true)
         .truncate(false)
         .open(&lock_path)
-        .into_app_err_with(|| format!("Could not open cache lock file at '{}'", lock_path.display()))?;
+        .into_app_err_with(|| format!("opening cache lock file at '{}'", lock_path.display()))?;
 
     // Block until we can acquire the lock
     // This needs to run in a blocking task since it may block for an extended time
     let file = tokio::task::spawn_blocking(move || {
         file.lock_exclusive()
-            .into_app_err_with(|| format!("Could not acquire exclusive lock on cache at '{}'", lock_path.display()))?;
+            .into_app_err_with(|| format!("acquiring exclusive lock on cache at '{}'", lock_path.display()))?;
         log::debug!(target: LOG_TARGET, "Acquired cache lock at '{}'", lock_path.display());
         Ok::<_, ohno::AppError>(file)
     })
     .await
-    .into_app_err("Lock task panicked")??;
+    .into_app_err("lock task panicked")??;
 
     Ok(CacheLockGuard(file))
 }

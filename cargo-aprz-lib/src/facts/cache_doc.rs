@@ -24,7 +24,7 @@ where
         Ok(file) => file,
         Err(e) => {
             log::debug!(target: LOG_TARGET, "Cache miss for {ctx}: {e:#}");
-            return Err(e).into_app_err_with(|| format!("unable to open file '{}'", path.display()));
+            return Err(e).into_app_err_with(|| format!("opening file '{}'", path.display()));
         }
     };
 
@@ -33,7 +33,7 @@ where
         Ok(data) => data,
         Err(e) => {
             log::debug!(target: LOG_TARGET, "Cache miss for {ctx}: {e:#}");
-            return Err(e).into_app_err_with(|| format!("unable to parse file '{}'", path.display()));
+            return Err(e).into_app_err_with(|| format!("parsing file '{}'", path.display()));
         }
     };
 
@@ -106,10 +106,10 @@ where
     let path = path.as_ref();
 
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).into_app_err_with(|| format!("unable to create directory '{}'", parent.display()))?;
+        fs::create_dir_all(parent).into_app_err_with(|| format!("creating directory '{}'", parent.display()))?;
     }
 
-    let file = File::create(path).into_app_err_with(|| format!("unable to create cache file '{}'", path.display()))?;
+    let file = File::create(path).into_app_err_with(|| format!("creating cache file '{}'", path.display()))?;
     let mut writer = BufWriter::new(file);
 
     // Use pretty formatting in debug mode for easier inspection, compact in release for smaller files
@@ -118,10 +118,10 @@ where
     #[cfg(not(debug_assertions))]
     let result = serde_json::to_writer(&mut writer, data);
 
-    result.into_app_err_with(|| format!("unable to write cache file '{}'", path.display()))?;
+    result.into_app_err_with(|| format!("writing cache file '{}'", path.display()))?;
     writer
         .flush()
-        .into_app_err_with(|| format!("unable to flush cache file '{}'", path.display()))?;
+        .into_app_err_with(|| format!("flushing cache file '{}'", path.display()))?;
     Ok(())
 }
 
@@ -165,7 +165,7 @@ mod tests {
     fn test_load_nonexistent_file() {
         let result: Result<TestData> = load("/nonexistent/path/file.json", "test data");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("unable to open"));
+        assert!(result.unwrap_err().to_string().contains("opening"));
     }
 
     #[test]
@@ -179,7 +179,7 @@ mod tests {
 
         let result: Result<TestData> = load(&file_path, "test data");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("unable to parse"));
+        assert!(result.unwrap_err().to_string().contains("parsing"));
     }
 
     #[derive(Debug, PartialEq, Serialize, Deserialize)]

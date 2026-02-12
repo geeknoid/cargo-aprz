@@ -1,6 +1,10 @@
 # cargo-aprz
 
-## 0.4.0 [TBD]
+## 0.5.0 TBD
+
+- Improved error messages
+
+## 0.4.0 2026-02-11
 
 ### Added
 

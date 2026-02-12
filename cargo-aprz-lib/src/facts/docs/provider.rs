@@ -98,7 +98,7 @@ impl Provider {
                 return ProviderResult::CrateNotFound(Arc::new([]));
             }
             Err(DownloadError::Other(e)) => {
-                return ProviderResult::Error(Arc::new(e.enrich_with(|| format!("could not download docs for {crate_spec}"))));
+                return ProviderResult::Error(Arc::new(e.enrich_with(|| format!("downloading docs for {crate_spec}"))));
             }
         };
 
@@ -122,7 +122,7 @@ impl Provider {
             }
             Err(e) => {
                 return ProviderResult::Error(Arc::new(
-                    e.enrich_with(|| format!("could not calculate documentation metrics for {crate_spec}")),
+                    e.enrich_with(|| format!("calculating documentation metrics for {crate_spec}")),
                 ));
             }
         };
@@ -176,7 +176,7 @@ impl Provider {
 
         let mut file = tokio::fs::File::create(&temp_file)
             .await
-            .into_app_err_with(|| format!("could not create temp file '{}'", temp_file.display()))
+            .into_app_err_with(|| format!("creating temp file '{}'", temp_file.display()))
             .map_err(DownloadError::Other)?;
 
         let mut stream = response.bytes_stream();
@@ -185,19 +185,19 @@ impl Provider {
         while let Some(chunk) = stream
             .try_next()
             .await
-            .into_app_err("could not read response chunk")
+            .into_app_err("reading response chunk")
             .map_err(DownloadError::Other)?
         {
             total_bytes += chunk.len();
             file.write_all(&chunk)
                 .await
-                .into_app_err_with(|| format!("could not write to temp file '{}'", temp_file.display()))
+                .into_app_err_with(|| format!("writing to temp file '{}'", temp_file.display()))
                 .map_err(DownloadError::Other)?;
         }
 
         file.flush()
             .await
-            .into_app_err_with(|| format!("could not flush temp file '{}'", temp_file.display()))
+            .into_app_err_with(|| format!("flushing temp file '{}'", temp_file.display()))
             .map_err(DownloadError::Other)?;
 
         log::debug!(target: LOG_TARGET, "Downloaded {total_bytes} bytes for {crate_spec} to temp file '{}'", temp_file.display());
@@ -207,9 +207,9 @@ impl Provider {
     fn calculate_docs_metrics(&self, zst_path: impl AsRef<Path>, crate_spec: &CrateSpec) -> Result<DocsData> {
         let path = zst_path.as_ref();
         log::debug!(target: LOG_TARGET, "Opening .zst file for {crate_spec}: {}", path.display());
-        let file = fs::File::open(path).into_app_err_with(|| format!("could not open file '{}' for {crate_spec}", path.display()))?;
+        let file = fs::File::open(path).into_app_err_with(|| format!("opening file '{}' for {crate_spec}", path.display()))?;
 
-        let decoder = zstd::Decoder::new(file).into_app_err_with(|| format!("could not create zstd decoder for {crate_spec}"))?;
+        let decoder = zstd::Decoder::new(file).into_app_err_with(|| format!("creating zstd decoder for {crate_spec}"))?;
 
         super::calc_metrics::calculate_docs_metrics(decoder, crate_spec, self.now)
     }

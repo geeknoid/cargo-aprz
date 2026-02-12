@@ -30,7 +30,7 @@ async fn get_repo_core(repo_path: &Path, repo_url: &Url) -> Result<()> {
 
     if !repo_path.exists() {
         if let Some(parent) = repo_path.parent() {
-            fs::create_dir_all(parent).into_app_err_with(|| format!("could not create directory '{}'", parent.display()))?;
+            fs::create_dir_all(parent).into_app_err_with(|| format!("creating directory '{}'", parent.display()))?;
         }
 
         return clone_repo(path_str, repo_url).await;
@@ -40,7 +40,7 @@ async fn get_repo_core(repo_path: &Path, repo_url: &Url) -> Result<()> {
     if !repo_path.join(".git").exists() {
         log::warn!(target: LOG_TARGET, "Cached repository path '{path_str}' exists but .git directory missing, re-cloning");
         fs::remove_dir_all(repo_path)
-            .into_app_err_with(|| format!("could not remove potentially corrupt cached repository '{path_str}'"))?;
+            .into_app_err_with(|| format!("removing potentially corrupt cached repository '{path_str}'"))?;
         return clone_repo(path_str, repo_url).await;
     }
 
@@ -56,7 +56,7 @@ async fn get_repo_core(repo_path: &Path, repo_url: &Url) -> Result<()> {
         // Fetch failed - repository might be corrupted, try re-clone
         let stderr = String::from_utf8_lossy(&output.stderr);
         log::warn!(target: LOG_TARGET, "Git fetch failed ({}), removing and re-cloning", stderr.trim());
-        fs::remove_dir_all(path_str).into_app_err_with(|| format!("could not remove stale cached repository '{path_str}'"))?;
+        fs::remove_dir_all(path_str).into_app_err_with(|| format!("removing stale cached repository '{path_str}'"))?;
         return clone_repo(path_str, repo_url).await;
     }
 
@@ -120,7 +120,7 @@ pub async fn count_recent_commits(repo_path: &Path, days: i64) -> Result<u64> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let count = stdout.trim().parse::<u64>().into_app_err("could not parse commit count")?;
+    let count = stdout.trim().parse::<u64>().into_app_err("parsing commit count")?;
 
     Ok(count)
 }
@@ -137,7 +137,7 @@ pub async fn count_all_commits(repo_path: &Path) -> Result<u64> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let count = stdout.trim().parse::<u64>().into_app_err("could not parse commit count")?;
+    let count = stdout.trim().parse::<u64>().into_app_err("parsing commit count")?;
 
     Ok(count)
 }
@@ -156,7 +156,7 @@ pub async fn get_first_commit_time(repo_path: &Path) -> Result<DateTime<Utc>> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let first_line = stdout.lines().next().unwrap_or("").trim();
-    let dt = DateTime::parse_from_rfc3339(first_line).into_app_err("could not parse first commit timestamp")?;
+    let dt = DateTime::parse_from_rfc3339(first_line).into_app_err("parsing first commit timestamp")?;
 
     Ok(dt.to_utc())
 }
@@ -172,7 +172,7 @@ pub async fn get_last_commit_time(repo_path: &Path) -> Result<DateTime<Utc>> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let dt = DateTime::parse_from_rfc3339(stdout.trim()).into_app_err("could not parse last commit timestamp")?;
+    let dt = DateTime::parse_from_rfc3339(stdout.trim()).into_app_err("parsing last commit timestamp")?;
 
     Ok(dt.to_utc())
 }
@@ -184,11 +184,11 @@ async fn run_git_with_timeout(args: &[&str]) -> Result<std::process::Output> {
         .stderr(std::process::Stdio::piped())
         .kill_on_drop(true)
         .spawn()
-        .into_app_err("could not spawn git command")?;
+        .into_app_err("spawning git command")?;
 
     match tokio::time::timeout(GIT_TIMEOUT, child.wait_with_output()).await {
         Ok(Ok(output)) => Ok(output),
-        Ok(Err(e)) => Err(e).into_app_err_with(|| format!("'git {}' failed to run", args.join(" "))),
+        Ok(Err(e)) => Err(e).into_app_err_with(|| format!("running 'git {}'", args.join(" "))),
         Err(_) => {
             bail!("'git {}' timed out after {} seconds", args.join(" "), GIT_TIMEOUT.as_secs());
         }
