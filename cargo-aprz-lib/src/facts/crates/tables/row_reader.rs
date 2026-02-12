@@ -84,6 +84,7 @@ impl<'a> RowReader<'a> {
         }
     }
 
+    #[cfg(all_fields)]
     pub fn read_str_vec(&mut self) -> Vec<&'a str> {
         let count = usize::try_from(self.read_u64()).expect("vector count fits in usize");
         let mut result = Vec::with_capacity(count);

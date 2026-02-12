@@ -10,7 +10,7 @@ use crate::facts::CrateSpec;
 use chrono::{DateTime, Utc};
 use ohno::{IntoAppError, app_err};
 use regex::Regex;
-use std::collections::HashMap;
+use crate::HashMap;
 use std::io::Read;
 use std::sync::LazyLock;
 
@@ -68,7 +68,7 @@ macro_rules! generate_version_support {
                 self.docs.as_deref()
             }
 
-            fn links(&self) -> &HashMap<String, Self::Id> {
+            fn links(&self) -> &std::collections::HashMap<String, Self::Id> {
                 &self.links
             }
         }
@@ -123,7 +123,7 @@ pub fn calculate_docs_metrics(reader: impl Read, crate_spec: &CrateSpec, now: Da
 /// This generic function works with items from any rustdoc-types version by accepting
 /// closures that check visibility and item type in a version-specific way.
 fn process_crate_items<Id, Item>(
-    index: &HashMap<Id, Item>,
+    index: &std::collections::HashMap<Id, Item>,
     root_id: &Id,
     crate_spec: &CrateSpec,
     is_public: impl Fn(&Item) -> bool,
@@ -217,7 +217,7 @@ where
 /// Handles reference-style link definitions where the link text in the docs
 /// (e.g., `` [`anyhow::Error::from_boxed`] ``) is defined to resolve to a different target
 /// (e.g., `Self::from_boxed`) via a line like: `` [`anyhow::Error::from_boxed`]: Self::from_boxed ``
-fn count_broken_links<Id>(docs: &str, resolved_links: &HashMap<String, Id>, _item_name: Option<&str>) -> u64 {
+fn count_broken_links<Id>(docs: &str, resolved_links: &std::collections::HashMap<String, Id>, _item_name: Option<&str>) -> u64 {
     let mut broken_count = 0;
     let mut skipped_inline = 0;
     let mut skipped_external = 0;
@@ -232,7 +232,7 @@ fn count_broken_links<Id>(docs: &str, resolved_links: &HashMap<String, Id>, _ite
 
     // Parse reference-style link definitions: [`link_text`]: target
     // These map the link text as written in the docs to the actual resolution target
-    let mut link_references = HashMap::new();
+    let mut link_references = HashMap::default();
     for cap in LINK_REFERENCE_REGEX.captures_iter(docs_to_check) {
         if let (Some(link_text), Some(target)) = (cap.get(1), cap.get(2)) {
             let _ = link_references.insert(link_text.as_str(), target.as_str());
@@ -332,5 +332,5 @@ trait ItemLike {
     type Id;
     fn name(&self) -> Option<&str>;
     fn docs(&self) -> Option<&str>;
-    fn links(&self) -> &HashMap<String, Self::Id>;
+    fn links(&self) -> &std::collections::HashMap<String, Self::Id>;
 }

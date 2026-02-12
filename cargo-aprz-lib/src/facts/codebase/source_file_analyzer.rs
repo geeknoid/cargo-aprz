@@ -2,7 +2,7 @@ use ra_ap_syntax::{
     AstNode, Edition, SourceFile, SyntaxKind, SyntaxNode,
     ast::{self, HasAttrs},
 };
-use std::collections::HashSet;
+use crate::HashSet;
 
 #[derive(Debug)]
 pub struct SourceFileInfo {
@@ -33,9 +33,9 @@ impl<'a> SourceFileAnalyzer<'a> {
         Self {
             source,
             line_starts,
-            production_lines: HashSet::new(),
-            test_lines: HashSet::new(),
-            comment_lines: HashSet::new(),
+            production_lines: HashSet::default(),
+            test_lines: HashSet::default(),
+            comment_lines: HashSet::default(),
             unsafe_count: 0,
             test_context_depth: 0,
         }

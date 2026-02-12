@@ -18,6 +18,16 @@
 // - [`reports`]: Report generation in multiple formats
 
 pub type Result<T, E = ohno::AppError> = core::result::Result<T, E>;
+pub(crate) type HashMap<K, V> = rustc_hash::FxHashMap<K, V>;
+pub(crate) type HashSet<V> = rustc_hash::FxHashSet<V>;
+
+pub(crate) fn hash_map_with_capacity<K, V>(capacity: usize) -> HashMap<K, V> {
+    HashMap::with_capacity_and_hasher(capacity, rustc_hash::FxBuildHasher)
+}
+
+pub(crate) fn hash_set_with_capacity<V>(capacity: usize) -> HashSet<V> {
+    HashSet::with_capacity_and_hasher(capacity, rustc_hash::FxBuildHasher)
+}
 
 macro_rules! declare_modules {
     ($($mod:ident),+ $(,)?) => {

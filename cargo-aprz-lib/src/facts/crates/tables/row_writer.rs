@@ -162,6 +162,7 @@ impl<'a, W: Write> RowWriter<'a, W> {
         Ok(())
     }
 
+    #[cfg(all_fields)]
     pub fn write_pg_array_as_str_vec(&mut self, s: &str) -> Result<()> {
         let inner = s
             .strip_prefix('{')

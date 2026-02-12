@@ -8,7 +8,7 @@ use crate::Result;
 use chrono::{DateTime, Utc};
 use core::time::Duration;
 use ohno::IntoAppError;
-use std::collections::HashMap;
+use crate::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -99,7 +99,7 @@ impl Collector {
 
         // Deduplicate CrateSpecs to prevent concurrent processing of the same crate
         let crate_data: Vec<_> = crate_data
-            .fold(HashMap::new(), |mut map, (crate_spec, provider_result)| {
+            .fold(HashMap::default(), |mut map, (crate_spec, provider_result)| {
                 let _ = map.entry(crate_spec).or_insert(provider_result);
                 map
             })

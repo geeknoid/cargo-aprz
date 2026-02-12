@@ -18,7 +18,8 @@ use compact_str::{CompactString, ToCompactString};
 use core::fmt::Debug;
 use core::time::Duration;
 use semver::Version as SemverVersion;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::BTreeMap;
+use crate::{HashMap, HashSet, hash_map_with_capacity, hash_set_with_capacity};
 use std::path::Path;
 use std::sync::Arc;
 use strsim::normalized_damerau_levenshtein;
@@ -59,6 +60,7 @@ type VersionScanResult = (
     HashMap<CrateRef, (VersionId, VersionsTableIndex)>,
     HashMap<CrateRef, SemverVersion>,
     HashSet<VersionId>,
+    HashMap<VersionId, CrateId>,
     HashMap<VersionId, CrateId>,
 );
 
@@ -147,7 +149,7 @@ impl Provider {
         let (needed_version_ids, crate_to_dependent_versions) = self.phase3_discover_dependencies(&crate_data);
 
         // Phase 4: Scan versions table for requested versions, resolve latest versions, and build dependency mappings
-        let (version_data_map, resolved_versions, version_ids, version_id_to_crate_id) =
+        let (version_data_map, resolved_versions, version_ids, version_id_to_crate_id, all_version_to_crate) =
             self.phase4_scan_versions_table(&needed_versions, &need_latest_version, &needed_version_ids, &mut crate_data);
 
         // Phase 5: Load lookup tables
@@ -158,7 +160,7 @@ impl Provider {
 
         // Phase 7: Collect download statistics
         let (version_monthly_downloads, crate_monthly_downloads) =
-            self.phase7_collect_downloads(&mut crate_data, &version_ids, &version_id_to_crate_id);
+            self.phase7_collect_downloads(&mut crate_data, &version_ids, &all_version_to_crate);
 
         // Phase 8: Count dependents
         count_dependents(&mut crate_data, &crate_to_dependent_versions, &version_id_to_crate_id);
@@ -221,8 +223,8 @@ impl Provider {
         HashMap<CrateId, PerCrateData>,
         HashMap<CompactString, Vec<CompactString>>,
     ) {
-        let mut crate_name_to_id = HashMap::with_capacity(requested_names.len());
-        let mut crate_data = HashMap::with_capacity(requested_names.len());
+        let mut crate_name_to_id = hash_map_with_capacity(requested_names.len());
+        let mut crate_data = hash_map_with_capacity(requested_names.len());
 
         // Pre-compute normalized versions of requested names for efficient similarity matching (only if suggestions enabled)
         let normalized_requested: HashMap<CompactString, CompactString> = if suggestions {
@@ -232,7 +234,7 @@ impl Provider {
                 .map(|&name| (name.to_compact_string(), normalize_name(name)))
                 .collect()
         } else {
-            HashMap::new()
+            HashMap::default()
         };
 
         let mut suggestions_map: HashMap<CompactString, [Option<(CompactString, f64)>; MAX_NAME_SUGGESTIONS]> = if suggestions {
@@ -241,7 +243,7 @@ impl Provider {
                 .map(|s| (s.clone(), [const { None }; MAX_NAME_SUGGESTIONS]))
                 .collect()
         } else {
-            HashMap::new()
+            HashMap::default()
         };
 
         // Reusable buffer for normalizing crate table names (avoids allocations, only needed if suggestions enabled)
@@ -331,7 +333,7 @@ impl Provider {
                 })
                 .collect()
         } else {
-            HashMap::new()
+            HashMap::default()
         };
 
         (crate_name_to_id, crate_data, final_suggestions)
@@ -352,8 +354,8 @@ impl Provider {
         requested: &[CrateRef],
         crate_name_to_id: &HashMap<CompactString, CrateId>,
     ) -> (HashMap<CrateId, HashMap<SemverVersion, CrateRef>>, HashMap<CrateId, CrateRef>) {
-        let mut needed_versions = HashMap::with_capacity(requested.len());
-        let mut need_latest_version = HashMap::with_capacity(requested.len());
+        let mut needed_versions = hash_map_with_capacity(requested.len());
+        let mut need_latest_version = hash_map_with_capacity(requested.len());
 
         for crate_ref in requested {
             if let Some(&crate_id) = crate_name_to_id.get(crate_ref.name()) {
@@ -361,7 +363,7 @@ impl Provider {
                     // Specific version requested
                     let _ = needed_versions
                         .entry(crate_id)
-                        .or_insert_with(HashMap::new)
+                        .or_insert_with(HashMap::default)
                         .insert(version.clone(), crate_ref.clone());
                 } else {
                     // Latest version needed
@@ -386,15 +388,15 @@ impl Provider {
         &self,
         crate_data: &HashMap<CrateId, PerCrateData>,
     ) -> (HashSet<VersionId>, HashMap<CrateId, HashSet<VersionId>>) {
-        let mut needed_version_ids = HashSet::new();
-        let mut crate_to_dependent_versions = HashMap::with_capacity(crate_data.len());
+        let mut needed_version_ids = HashSet::default();
+        let mut crate_to_dependent_versions = hash_map_with_capacity(crate_data.len());
 
         for (row, _) in self.table_mgr.dependencies_table().iter() {
             if crate_data.contains_key(&row.crate_id) {
                 let _ = needed_version_ids.insert(row.version_id);
                 let _ = crate_to_dependent_versions
                     .entry(row.crate_id)
-                    .or_insert_with(HashSet::new)
+                    .or_insert_with(HashSet::default)
                     .insert(row.version_id);
             }
         }
@@ -404,20 +406,23 @@ impl Provider {
 
     /// Phase 4: Scan versions table to find requested versions, resolve latest versions, and build dependency mappings.
     ///
-    /// This is a quadruple-purpose scan that:
+    /// This is a multi-purpose scan that:
     /// 1. Finds the table indices for all requested versions (for data retrieval)
     /// 2. Resolves latest versions for crates where no specific version was requested
     /// 3. Maps `version_ids` back to `crate_ids` (for dependent counting)
-    /// 4. Counts versions created in the last 90 days for each crate
+    /// 4. Counts versions created in the last 90/180/365 days for each crate
+    /// 5. Builds a complete `version_id` to `crate_id` mapping for all versions of our crates (for download aggregation)
     ///
     /// For latest version resolution, tracks the highest version number seen for each crate.
-    /// Early-exits once all requested versions, latest versions, and dependency mappings are found.
+    /// Early-exits once all requested versions, latest versions, and dependency mappings are found
+    /// (but only when version-age counting is also complete, which requires a full scan for our crates).
     ///
     /// Returns:
     /// - Map of request index to (`version_id`, table index) for assembling results
     /// - Map of request index to resolved version for crates needing latest
     /// - Set of version IDs for monthly download aggregation
     /// - Map of `version_id` to `crate_id` for dependent counting
+    /// - Map of all `version_id` to `crate_id` for our crates (for crate-wide download aggregation)
     fn phase4_scan_versions_table(
         &self,
         needed_versions: &HashMap<CrateId, HashMap<SemverVersion, CrateRef>>,
@@ -427,12 +432,13 @@ impl Provider {
     ) -> VersionScanResult {
         let total_needed_versions: usize = needed_versions.values().map(HashMap::len).sum();
 
-        let mut version_data_map = HashMap::with_capacity(total_needed_versions + need_latest_version.len());
-        let mut resolved_versions = HashMap::with_capacity(need_latest_version.len());
+        let mut version_data_map = hash_map_with_capacity(total_needed_versions + need_latest_version.len());
+        let mut resolved_versions = hash_map_with_capacity(need_latest_version.len());
         let mut latest_version_indices: HashMap<CrateId, (VersionsTableIndex, SemverVersion)> =
-            HashMap::with_capacity(need_latest_version.len());
-        let mut version_ids = HashSet::with_capacity(total_needed_versions + need_latest_version.len());
-        let mut version_id_to_crate_id = HashMap::with_capacity(needed_version_ids.len());
+            hash_map_with_capacity(need_latest_version.len());
+        let mut version_ids = hash_set_with_capacity(total_needed_versions + need_latest_version.len());
+        let mut version_id_to_crate_id = hash_map_with_capacity(needed_version_ids.len());
+        let mut all_version_to_crate = HashMap::default();
 
         let mut remaining_versions = total_needed_versions;
         let remaining_latest = need_latest_version.len();
@@ -444,15 +450,16 @@ impl Provider {
         let cutoff_365 = self.now - chrono::Duration::days(365);
 
         for (row, index) in self.table_mgr.versions_table().iter() {
-            // Count versions created in the last 90/180/365 days for our crates
-            if let Some(data) = crate_data.get_mut(&row.crate_id)
-                && row.created_at >= cutoff_365
-            {
-                data.versions_last_365_days += 1;
-                if row.created_at >= cutoff_180 {
-                    data.versions_last_180_days += 1;
-                    if row.created_at >= cutoff_90 {
-                        data.versions_last_90_days += 1;
+            // For versions belonging to our crates: build complete version->crate map and count versions by age
+            if let Some(data) = crate_data.get_mut(&row.crate_id) {
+                let _ = all_version_to_crate.insert(row.id, row.crate_id);
+                if row.created_at >= cutoff_365 {
+                    data.versions_last_365_days += 1;
+                    if row.created_at >= cutoff_180 {
+                        data.versions_last_180_days += 1;
+                        if row.created_at >= cutoff_90 {
+                            data.versions_last_90_days += 1;
+                        }
                     }
                 }
             }
@@ -504,7 +511,7 @@ impl Provider {
             }
         }
 
-        (version_data_map, resolved_versions, version_ids, version_id_to_crate_id)
+        (version_data_map, resolved_versions, version_ids, version_id_to_crate_id, all_version_to_crate)
     }
 
     /// Phase 5: Load all lookup tables for data enrichment in parallel.
@@ -541,12 +548,12 @@ impl Provider {
         self.collect_crate_keywords(crate_data);
     }
 
-    /// Phase 7: Collect download statistics for crates and versions in parallel.
+    /// Phase 7: Collect download statistics for crates and versions.
     ///
-    /// Performs three operations:
+    /// Performs two operations:
     /// 1. Scans `crate_downloads` table to populate overall download counts (with early-exit)
-    /// 2. Scans `version_downloads` table to build monthly download time series per version
-    /// 3. Scans `version_downloads` table to build monthly download time series per crate (all versions)
+    /// 2. Scans `version_downloads` table once to build monthly download time series for both
+    ///    individual versions and whole crates (all versions aggregated)
     ///
     /// Returns tuple of (version-specific monthly downloads, crate-wide monthly downloads).
     #[expect(clippy::type_complexity, reason = "return type clearly represents two related download maps")]
@@ -554,12 +561,10 @@ impl Provider {
         &self,
         crate_data: &mut HashMap<CrateId, PerCrateData>,
         version_ids: &HashSet<VersionId>,
-        version_id_to_crate_id: &HashMap<VersionId, CrateId>,
+        all_version_to_crate: &HashMap<VersionId, CrateId>,
     ) -> (HashMap<VersionId, Vec<(NaiveDate, u64)>>, HashMap<CrateId, Vec<(NaiveDate, u64)>>) {
         self.collect_crate_downloads(crate_data);
-        let version_monthly = self.aggregate_monthly_downloads(version_ids);
-        let crate_monthly = self.aggregate_crate_monthly_downloads(version_id_to_crate_id, crate_data);
-        (version_monthly, crate_monthly)
+        self.aggregate_all_monthly_downloads(version_ids, all_version_to_crate, crate_data)
     }
 
     /// Assemble a single query result from collected data.
@@ -647,7 +652,7 @@ impl Provider {
     }
 
     fn load_categories(&self) -> HashMap<CategoryId, CategoriesTableIndex> {
-        let mut map = HashMap::with_capacity(self.table_mgr.categories_table().len());
+        let mut map = hash_map_with_capacity(self.table_mgr.categories_table().len());
         for (row, index) in self.table_mgr.categories_table().iter() {
             let _ = map.insert(row.id, index);
         }
@@ -655,7 +660,7 @@ impl Provider {
     }
 
     fn load_keywords(&self) -> HashMap<KeywordId, KeywordsTableIndex> {
-        let mut map = HashMap::with_capacity(self.table_mgr.keywords_table().len());
+        let mut map = hash_map_with_capacity(self.table_mgr.keywords_table().len());
         for (row, index) in self.table_mgr.keywords_table().iter() {
             let _ = map.insert(row.id, index);
         }
@@ -663,7 +668,7 @@ impl Provider {
     }
 
     fn load_users(&self) -> HashMap<UserId, UsersTableIndex> {
-        let mut map = HashMap::with_capacity(self.table_mgr.users_table().len());
+        let mut map = hash_map_with_capacity(self.table_mgr.users_table().len());
         for (row, index) in self.table_mgr.users_table().iter() {
             let _ = map.insert(row.id, index);
         }
@@ -671,7 +676,7 @@ impl Provider {
     }
 
     fn load_teams(&self) -> HashMap<TeamId, TeamsTableIndex> {
-        let mut map = HashMap::with_capacity(self.table_mgr.teams_table().len());
+        let mut map = hash_map_with_capacity(self.table_mgr.teams_table().len());
         for (row, index) in self.table_mgr.teams_table().iter() {
             let _ = map.insert(row.id, index);
         }
@@ -718,78 +723,46 @@ impl Provider {
         }
     }
 
-    fn aggregate_monthly_downloads(&self, version_ids: &HashSet<VersionId>) -> HashMap<VersionId, Vec<(NaiveDate, u64)>> {
-        // Aggregate by version_id -> (year, month) -> downloads
-        // Using BTreeMap for automatic sorting by (year, month)
-        let mut monthly: HashMap<VersionId, BTreeMap<(i32, u32), u64>> = HashMap::with_capacity(version_ids.len());
+    /// Aggregate monthly downloads for both individual versions and whole crates in a single scan.
+    ///
+    /// Scans the `version_downloads` table once and simultaneously builds:
+    /// 1. Per-version monthly download time series (for the specific queried versions)
+    /// 2. Per-crate monthly download time series (across all versions of each crate)
+    #[expect(clippy::type_complexity, reason = "return type clearly represents two related download maps")]
+    fn aggregate_all_monthly_downloads(
+        &self,
+        version_ids: &HashSet<VersionId>,
+        all_version_to_crate: &HashMap<VersionId, CrateId>,
+        crate_data: &HashMap<CrateId, PerCrateData>,
+    ) -> (HashMap<VersionId, Vec<(NaiveDate, u64)>>, HashMap<CrateId, Vec<(NaiveDate, u64)>>) {
+        let mut version_monthly: HashMap<VersionId, BTreeMap<(i32, u32), u64>> = hash_map_with_capacity(version_ids.len());
+        let mut crate_monthly: HashMap<CrateId, BTreeMap<(i32, u32), u64>> = hash_map_with_capacity(crate_data.len());
 
         for (row, _) in self.table_mgr.version_downloads_table().iter() {
+            let month_key = (row.date.year(), row.date.month());
+
+            // Aggregate per-version downloads for the specific queried versions
             if version_ids.contains(&row.version_id) {
-                *monthly
+                *version_monthly
                     .entry(row.version_id)
                     .or_default()
-                    .entry((row.date.year(), row.date.month()))
+                    .entry(month_key)
                     .or_insert(0) += row.downloads;
             }
-        }
 
-        // Convert BTreeMap to sorted Vec in one pass
-        monthly
-            .into_iter()
-            .map(|(version_id, month_map)| {
-                let vec = month_map
-                    .into_iter()
-                    .filter_map(|((year, month), downloads)| NaiveDate::from_ymd_opt(year, month, 1).map(|date| (date, downloads)))
-                    .collect();
-                (version_id, vec)
-            })
-            .collect()
-    }
-
-    /// Aggregate monthly downloads across all versions of each crate.
-    ///
-    /// This scans the `version_downloads` table and aggregates download counts by `crate_id`
-    /// (across all versions) and by month. The result is monthly download time series
-    /// for each crate as a whole.
-    fn aggregate_crate_monthly_downloads(
-        &self,
-        _version_id_to_crate_id: &HashMap<VersionId, CrateId>,
-        crate_data: &HashMap<CrateId, PerCrateData>,
-    ) -> HashMap<CrateId, Vec<(NaiveDate, u64)>> {
-        // Build a complete mapping of version_id -> crate_id for ALL versions of the crates we care about
-        // This is needed because we want to aggregate downloads across all versions, not just the queried version
-        let mut version_to_crate: HashMap<VersionId, CrateId> = HashMap::new();
-        for (row, _) in self.table_mgr.versions_table().iter() {
-            if crate_data.contains_key(&row.crate_id) {
-                let _ = version_to_crate.insert(row.id, row.crate_id);
-            }
-        }
-
-        // Aggregate by crate_id -> (year, month) -> downloads
-        // Using BTreeMap for automatic sorting by (year, month)
-        let mut monthly: HashMap<CrateId, BTreeMap<(i32, u32), u64>> = HashMap::with_capacity(crate_data.len());
-
-        for (row, _) in self.table_mgr.version_downloads_table().iter() {
-            if let Some(&crate_id) = version_to_crate.get(&row.version_id) {
-                *monthly
+            // Aggregate per-crate downloads across all versions of our crates
+            if let Some(&crate_id) = all_version_to_crate.get(&row.version_id) {
+                *crate_monthly
                     .entry(crate_id)
                     .or_default()
-                    .entry((row.date.year(), row.date.month()))
+                    .entry(month_key)
                     .or_insert(0) += row.downloads;
             }
         }
 
-        // Convert BTreeMap to sorted Vec in one pass
-        monthly
-            .into_iter()
-            .map(|(crate_id, month_map)| {
-                let vec = month_map
-                    .into_iter()
-                    .filter_map(|((year, month), downloads)| NaiveDate::from_ymd_opt(year, month, 1).map(|date| (date, downloads)))
-                    .collect();
-                (crate_id, vec)
-            })
-            .collect()
+        let version_result = monthly_btree_to_vec(version_monthly);
+        let crate_result = monthly_btree_to_vec(crate_monthly);
+        (version_result, crate_result)
     }
 
     #[expect(clippy::too_many_arguments, reason = "Helper method needs access to many data structures")]
@@ -914,6 +887,22 @@ impl Provider {
     }
 }
 
+/// Convert monthly download maps to sorted vectors.
+fn monthly_btree_to_vec<K: Eq + core::hash::Hash>(
+    monthly: HashMap<K, BTreeMap<(i32, u32), u64>>,
+) -> HashMap<K, Vec<(NaiveDate, u64)>> {
+    monthly
+        .into_iter()
+        .map(|(key, month_map)| {
+            let vec = month_map
+                .into_iter()
+                .filter_map(|((year, month), downloads)| NaiveDate::from_ymd_opt(year, month, 1).map(|date| (date, downloads)))
+                .collect();
+            (key, vec)
+        })
+        .collect()
+}
+
 /// Normalize a crate name for similarity matching by converting to lowercase and removing separators.
 fn normalize_name_into(name: &str, buffer: &mut CompactString) {
     buffer.clear();
@@ -940,7 +929,7 @@ fn count_dependents(
     version_id_to_crate_id: &HashMap<VersionId, CrateId>,
 ) {
     // Map version_ids to crate_ids using prebuilt HashMap (no table scan!)
-    let mut dependents: HashMap<CrateId, HashSet<CrateId>> = HashMap::with_capacity(crate_data.len());
+    let mut dependents: HashMap<CrateId, HashSet<CrateId>> = hash_map_with_capacity(crate_data.len());
     for (depended_upon, version_set) in crate_to_dependent_versions {
         for &version_id in version_set {
             if let Some(&crate_id) = version_id_to_crate_id.get(&version_id) {

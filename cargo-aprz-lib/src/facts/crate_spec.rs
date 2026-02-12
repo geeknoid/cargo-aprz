@@ -3,7 +3,7 @@ use core::cmp::Ordering;
 use core::fmt::{Display, Formatter, Result as FmtResult};
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use crate::HashMap;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -56,7 +56,7 @@ impl CrateSpec {
 /// Group crate by their repos
 #[must_use]
 pub fn by_repo(specs: impl IntoIterator<Item = CrateSpec>) -> HashMap<RepoSpec, Vec<CrateSpec>> {
-    let mut repo_crates: HashMap<RepoSpec, Vec<CrateSpec>> = HashMap::new();
+    let mut repo_crates: HashMap<RepoSpec, Vec<CrateSpec>> = HashMap::default();
     for crate_spec in specs {
         if let Some(repo_spec) = &crate_spec.repo_spec {
             repo_crates.entry(repo_spec.clone()).or_default().push(crate_spec);

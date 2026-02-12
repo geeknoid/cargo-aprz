@@ -3,7 +3,7 @@
 use crate::expr::{Appraisal, ExpressionDisposition, ExpressionOutcome, Risk};
 use crate::metrics::{Metric, MetricCategory, MetricValue};
 use core::fmt;
-use std::collections::{HashMap, HashSet};
+use crate::{HashMap, HashSet};
 
 /// Format a metric value as a string using consistent formatting rules.
 ///
@@ -139,7 +139,7 @@ impl fmt::Display for IconName<'_> {
 ///
 /// Returns a `HashMap` mapping each category to a vector of metric names.
 pub fn group_metrics_by_category<'a>(metrics: &'a [Metric]) -> HashMap<MetricCategory, Vec<&'a str>> {
-    let mut metrics_by_category: HashMap<MetricCategory, Vec<&'a str>> = HashMap::with_capacity(metrics.len().min(16));
+    let mut metrics_by_category: HashMap<MetricCategory, Vec<&'a str>> = crate::hash_map_with_capacity(metrics.len().min(16));
 
     for metric in metrics {
         metrics_by_category.entry(metric.category()).or_default().push(metric.name());
@@ -153,8 +153,8 @@ pub fn group_metrics_by_category<'a>(metrics: &'a [Metric]) -> HashMap<MetricCat
 /// Each metric name appears at most once per category, in the order first encountered.
 #[expect(single_use_lifetimes, reason = "Lifetime required for impl Trait parameter")]
 pub fn group_all_metrics_by_category<'a>(crate_metrics: impl IntoIterator<Item = &'a [Metric]>) -> HashMap<MetricCategory, Vec<&'static str>> {
-    let mut seen: HashSet<&'static str> = HashSet::with_capacity(128);
-    let mut metrics_by_category: HashMap<MetricCategory, Vec<&'static str>> = HashMap::with_capacity(16);
+    let mut seen: HashSet<&'static str> = crate::hash_set_with_capacity(128);
+    let mut metrics_by_category: HashMap<MetricCategory, Vec<&'static str>> = crate::hash_map_with_capacity(16);
 
     for metrics in crate_metrics {
         for metric in metrics {

@@ -102,7 +102,7 @@ pub async fn count_contributors(repo_path: &Path) -> Result<u64> {
 
     // Parse output and count unique emails
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let unique_contributors: std::collections::HashSet<&str> = stdout.lines().collect();
+    let unique_contributors: crate::HashSet<&str> = stdout.lines().collect();
 
     Ok(unique_contributors.len() as u64)
 }

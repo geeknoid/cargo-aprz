@@ -12,7 +12,7 @@ use chrono::{DateTime, Utc};
 use core::time::Duration;
 use futures_util::future::join_all;
 use ohno::{EnrichableExt, IntoAppError, app_err};
-use std::collections::HashMap;
+use crate::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -71,7 +71,7 @@ impl Provider {
 
         let (cached_results, needs_repo_fetch) = spawn_blocking(move || {
             let mut cached_results = Vec::new();
-            let mut needs_repo_fetch: HashMap<RepoSpec, Vec<CrateSpec>> = HashMap::new();
+            let mut needs_repo_fetch: HashMap<RepoSpec, Vec<CrateSpec>> = HashMap::default();
 
             for (repo_spec, crates) in repo_crates {
                 let mut all_cached_data = Vec::new();
@@ -535,7 +535,8 @@ impl Provider {
 
     /// Count transitive dependencies by walking the dependency graph
     fn count_transitive_dependencies(package_id: &PackageId, metadata: &Metadata) -> usize {
-        use std::collections::{HashSet, VecDeque};
+        use crate::HashSet;
+        use std::collections::VecDeque;
 
         let Some(resolve) = &metadata.resolve else {
             log::debug!(target: LOG_TARGET, "No resolve graph in metadata, cannot count transitive dependencies");
@@ -551,7 +552,7 @@ impl Provider {
         };
 
         // Breadth-first traversal of the dependency graph using references
-        let mut visited: HashSet<PackageId> = HashSet::new();
+        let mut visited: HashSet<PackageId> = HashSet::default();
         let mut to_visit: VecDeque<&PackageId> = VecDeque::new();
 
         // Start with direct dependencies (push references)

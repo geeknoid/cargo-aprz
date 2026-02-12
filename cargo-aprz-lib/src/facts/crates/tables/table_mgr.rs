@@ -16,7 +16,7 @@ use flate2::bufread::GzDecoder;
 use futures_util::StreamExt;
 use mmap_rs::{MmapFlags, MmapOptions};
 use ohno::{EnrichableExt, IntoAppError, bail};
-use std::collections::HashMap;
+use crate::HashMap;
 use std::fs::{self, File};
 use std::io::{BufRead, Error as IoError, Read};
 use std::path::Path;
@@ -492,7 +492,7 @@ fn process_download(
     let decoder = GzDecoder::new(reader);
     let mut archive = Archive::new(decoder);
 
-    let mut files = HashMap::new();
+    let mut files = HashMap::default();
     for entry in archive.entries()? {
         let mut entry = entry?;
         let path = entry.path()?.to_path_buf();

@@ -348,7 +348,7 @@ mod tests {
         let metrics: Vec<_> = flatten(&facts).collect();
 
         // Check that different categories are used
-        let categories: std::collections::HashSet<_> = metrics.iter().map(Metric::category).collect();
+        let categories: crate::HashSet<_> = metrics.iter().map(Metric::category).collect();
 
         assert!(categories.len() > 5, "Should use multiple metric categories, found {categories:?}");
     }

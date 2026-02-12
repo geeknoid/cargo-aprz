@@ -5,7 +5,7 @@ use crate::metrics::{Metric, MetricCategory};
 use core::fmt::Write;
 use owo_colors::OwoColorize;
 use std::borrow::Cow;
-use std::collections::HashMap;
+use crate::HashMap;
 use strum::IntoEnumIterator;
 use terminal_size::{Width, terminal_size};
 

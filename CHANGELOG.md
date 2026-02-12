@@ -1,8 +1,20 @@
 # cargo-aprz
 
-## 0.5.0 TBD
+## 0.5.0 2026-02-12
 
+### Added
+
+- Make all network communication resilient with retries and timeouts
+
+### Changed
+
+- Substantially improved perf of "identification" phase
 - Improved error messages
+
+### Fixed
+
+- Fixed point calculation around failed expressions
+- Failed expressions now produce cleaner output in the reports
 
 ## 0.4.0 2026-02-11
 

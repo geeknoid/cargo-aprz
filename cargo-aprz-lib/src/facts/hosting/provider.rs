@@ -14,7 +14,7 @@ use futures_util::future::join_all;
 use ohno::EnrichableExt;
 use reqwest::header::LINK;
 use core::borrow::Borrow;
-use std::collections::HashMap;
+use crate::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -184,8 +184,8 @@ impl Provider {
         let repo_to_crates = crate_spec::by_repo(crates);
 
         // Group repos by host domain
-        let mut repos_by_host: HashMap<&'static str, Vec<RepoSpec>> = HashMap::with_capacity(SUPPORTED_HOSTS.len());
-        let mut crates_by_host: HashMap<&'static str, HashMap<RepoSpec, Vec<CrateSpec>>> = HashMap::with_capacity(SUPPORTED_HOSTS.len());
+        let mut repos_by_host: HashMap<&'static str, Vec<RepoSpec>> = crate::hash_map_with_capacity(SUPPORTED_HOSTS.len());
+        let mut crates_by_host: HashMap<&'static str, HashMap<RepoSpec, Vec<CrateSpec>>> = crate::hash_map_with_capacity(SUPPORTED_HOSTS.len());
         let mut unknown_host_crates: Vec<(CrateSpec, CompactString)> = Vec::new();
 
         for (repo_spec, crate_specs) in repo_to_crates {
@@ -221,7 +221,7 @@ impl Provider {
         let all_results = join_all(fetch_futures).await;
 
         // Merge all repo-to-crates maps for efficient lookup
-        let mut repo_to_crates_all = HashMap::new();
+        let mut repo_to_crates_all = HashMap::default();
         for crates_map in crates_by_host.into_values() {
             repo_to_crates_all.extend(crates_map);
         }

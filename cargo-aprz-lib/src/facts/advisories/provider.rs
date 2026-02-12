@@ -13,7 +13,7 @@ use rustsec::{
     repository::git::{DEFAULT_URL, Repository},
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use crate::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -83,7 +83,7 @@ where
 {
     let start_time = std::time::Instant::now();
 
-    let mut crate_map: HashMap<CompactString, Vec<(CrateSpec, ProviderResult<AdvisoryData>)>> = HashMap::new();
+    let mut crate_map: HashMap<CompactString, Vec<(CrateSpec, ProviderResult<AdvisoryData>)>> = HashMap::default();
 
     for crate_spec in crates {
         crate_map.entry(crate_spec.name().into()).or_default().push((

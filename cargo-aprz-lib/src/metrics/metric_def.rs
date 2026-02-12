@@ -1222,7 +1222,7 @@ mod tests {
 
     #[test]
     fn test_all_metric_names_are_unique() {
-        let mut names = std::collections::HashSet::new();
+        let mut names = crate::HashSet::default();
         for metric_def in METRIC_DEFINITIONS {
             assert!(names.insert(metric_def.name), "Duplicate metric name found: '{}'", metric_def.name);
         }

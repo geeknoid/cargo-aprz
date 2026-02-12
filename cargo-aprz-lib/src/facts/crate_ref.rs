@@ -267,9 +267,9 @@ mod tests {
 
     #[test]
     fn test_hash_usable_in_hashset() {
-        use std::collections::HashSet;
+        use crate::HashSet;
 
-        let mut set = HashSet::new();
+        let mut set = HashSet::default();
         let _ = set.insert(CrateRef::new("a", Some(Version::parse("1.0.0").unwrap())));
         let _ = set.insert(CrateRef::new("a", Some(Version::parse("1.0.0").unwrap())));
         let _ = set.insert(CrateRef::new("a", None));

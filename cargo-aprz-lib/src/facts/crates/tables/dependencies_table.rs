@@ -4,13 +4,12 @@ use ohno::bail;
 use serde::Deserialize;
 
 define_rows! {
-    DependencyRow<'a> {
+    DependencyRow {
         pub version_id: VersionId,
         pub crate_id: CrateId,
 
-        #[allow(dead_code, reason = "Needed for Compilcated Reasons (TM)")]
+        #[cfg(all_fields)]
         pub features: Vec<&'a str>,
-
         #[cfg(all_fields)]
         pub id: super::DependencyId,
         #[cfg(all_fields)]
@@ -36,7 +35,7 @@ pub enum DependencyKind {
     Dev,
 }
 
-impl DependencyRow<'_> {
+impl DependencyRow {
     #[cfg(all_fields)]
     pub fn kind(&self) -> DependencyKind {
         match self.kind {
@@ -53,10 +52,11 @@ define_table! {
         fn write_row(csv_row: &CsvDependencyRow<'a>, writer: &mut RowWriter<impl Write>) -> Result<()> {
             writer.write_str_as_u64(csv_row.version_id)?;
             writer.write_str_as_u64(csv_row.crate_id)?;
-            writer.write_pg_array_as_str_vec(csv_row.features)?;
 
             #[cfg(all_fields)]
             {
+                writer.write_pg_array_as_str_vec(csv_row.features)?;
+
                 if csv_row.kind != "0" && csv_row.kind != "1" && csv_row.kind != "2" {
                     bail!("invalid dependency kind: {}", csv_row.kind);
                 }
@@ -73,10 +73,12 @@ define_table! {
             Ok(())
         }
 
-        fn read_row<'a>(reader: &mut RowReader<'a>) -> DependencyRow<'a> {
+        fn read_row<'a>(reader: &mut RowReader<'a>) -> DependencyRow {
             DependencyRow {
                 version_id: VersionId(reader.read_u64()),
                 crate_id: CrateId(reader.read_u64()),
+
+                #[cfg(all_fields)]
                 features: reader.read_str_vec(),
 
                 #[cfg(all_fields)]

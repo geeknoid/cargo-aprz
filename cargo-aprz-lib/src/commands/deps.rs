@@ -6,7 +6,7 @@ use cargo_metadata::{CargoOpt, DependencyKind, Node, Package, PackageId};
 use clap::{Parser, ValueEnum};
 use ohno::{IntoAppError, bail};
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use crate::{HashMap, HashSet};
 use strum::{Display, EnumString};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, ValueEnum, Deserialize, Serialize, Display, EnumString)]
@@ -202,8 +202,8 @@ fn build_transitive_deps<'a>(
         DependencyType::Build => DependencyKind::Build,
     };
 
-    let mut result = HashSet::new();
-    let mut visited: HashSet<&PackageId> = HashSet::new();
+    let mut result = HashSet::default();
+    let mut visited: HashSet<&PackageId> = HashSet::default();
     let mut queue: Vec<&PackageId> = Vec::new();
 
     // Seed the queue with the target package's direct deps of the requested kind

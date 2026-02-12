@@ -4,11 +4,9 @@
 //! expressions and determine if they should be ACCEPTED, DENIED, or NOT EVALUATED.
 
 use super::{Appraisal, Expression, ExpressionDisposition, ExpressionOutcome, Risk};
-use crate::Result;
 use crate::metrics::{Metric, MetricValue};
 use cel_interpreter::{Context, Program, Value, objects::Map};
 use chrono::{DateTime, Local};
-use ohno::{IntoAppError, app_err};
 use std::sync::Arc;
 
 /// Evaluate expressions against metrics and determine risk level
@@ -50,7 +48,7 @@ pub fn evaluate(
                 ExpressionDisposition::True
             }
             Ok(false) => ExpressionDisposition::False,
-            Err(e) => ExpressionDisposition::Failed(e.to_string()),
+            Err(e) => ExpressionDisposition::Failed(e),
         };
         high_risk_outcomes.push(ExpressionOutcome::new(
             expr.name_arc(),
@@ -80,7 +78,7 @@ pub fn evaluate(
                 ExpressionDisposition::True
             }
             Ok(false) => ExpressionDisposition::False,
-            Err(e) => ExpressionDisposition::Failed(e.to_string()),
+            Err(e) => ExpressionDisposition::Failed(e),
         };
         outcomes.push(ExpressionOutcome::new(
             expr.name_arc(),
@@ -108,24 +106,23 @@ pub fn evaluate(
 }
 
 /// Evaluates a pre-parsed boolean expression against a context
-fn evaluate_expression(program: &Program, name: &str, context: &Context) -> Result<bool> {
+fn evaluate_expression(program: &Program, name: &str, context: &Context) -> Result<bool, String> {
     match program
         .execute(context)
-        .into_app_err(format!("evaluating expression '{name}'"))?
+        .map_err(|e| e.to_string())?
     {
         Value::Bool(b) => Ok(b),
-        other => Err(app_err!("expression '{name}' did not return a boolean, got '{other:?}' instead")),
+        other => Err(format!("expression '{name}' did not return a boolean, got '{other:?}' instead")),
     }
 }
 
 fn build_cel_context(metrics: impl IntoIterator<Item: core::borrow::Borrow<Metric>>, now: DateTime<Local>) -> Context<'static> {
     use core::borrow::Borrow;
-    use std::collections::HashMap;
 
     let mut context = Context::default();
 
     // Build nested map structure for dotted metric names
-    let mut root_map: HashMap<&str, HashMap<Arc<String>, Value>> = HashMap::with_capacity(16);
+    let mut root_map: crate::HashMap<&str, std::collections::HashMap<Arc<String>, Value>> = crate::hash_map_with_capacity(16);
     let mut flat_vars: Vec<(&str, Value)> = Vec::with_capacity(16);
 
     for metric in metrics {
@@ -260,8 +257,8 @@ mod tests {
         default_value: || None,
     };
 
-    fn eval_expr(expr: &str, metrics: &[Metric]) -> Result<bool> {
-        let program = Program::compile(expr).map_err(|e| app_err!("could not compile expression: {e}"))?;
+    fn eval_expr(expr: &str, metrics: &[Metric]) -> Result<bool, String> {
+        let program = Program::compile(expr).map_err(|e| format!("could not compile expression: {e}"))?;
         let context = build_cel_context(metrics, test_timestamp());
         evaluate_expression(&program, "test", &context)
     }
@@ -432,7 +429,7 @@ mod tests {
         let metrics = vec![Metric::with_value(&STARS_DEF, MetricValue::UInt(150))];
         let result = eval_expr("stars", &metrics);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("did not return a boolean"));
+        assert!(result.unwrap_err().contains("did not return a boolean"));
     }
 
     #[test]
