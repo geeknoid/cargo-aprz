@@ -93,4 +93,47 @@ impl<'a> RowReader<'a> {
         }
         result
     }
+
+    /// Advances past a vlen-encoded u64 without returning the value.
+    pub fn skip_u64(&mut self) {
+        let _ = self.read_u64();
+    }
+
+    /// Advances past a length-prefixed string without UTF-8 validation.
+    pub fn skip_str(&mut self) {
+        let len = self.read_u64();
+        let len = usize::try_from(len).expect("string length fits in usize");
+        self.position = self.position.checked_add(len).expect("no overflow in skip_str");
+    }
+
+    /// Advances past a serialized `Version` (3 vlen u64s + 2 length-prefixed strings).
+    pub fn skip_version(&mut self) {
+        self.skip_u64(); // major
+        self.skip_u64(); // minor
+        self.skip_u64(); // patch
+        self.skip_str(); // pre
+        self.skip_str(); // build
+    }
+
+    pub const fn skip_bool(&mut self) {
+        self.position += 1;
+    }
+
+    pub fn skip_optional_u64(&mut self) {
+        if self.read_byte() != 0 {
+            self.skip_u64();
+        }
+    }
+
+    pub fn skip_datetime(&mut self) {
+        self.skip_u64();
+    }
+
+    #[cfg(all_fields)]
+    pub fn skip_str_vec(&mut self) {
+        let count = self.read_u64();
+        for _ in 0..count {
+            self.skip_str();
+        }
+    }
 }

@@ -92,7 +92,7 @@ pub use table_mgr::TableMgr;
 pub use teams_table::{TeamRow, TeamsTable, TeamsTableIndex};
 pub use users_table::{UserRow, UsersTable, UsersTableIndex};
 pub use version_downloads_table::{VersionDownloadRow, VersionDownloadsTable};
-pub use versions_table::{VersionRow, VersionsTable, VersionsTableIndex};
+pub use versions_table::{VersionRow, VersionRowLean, VersionsTable, VersionsTableIndex};
 
 #[cfg(all_tables)]
 pub use default_versions_table::{DefaultVersionRow, DefaultVersionsTable};

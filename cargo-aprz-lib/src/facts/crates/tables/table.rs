@@ -12,10 +12,10 @@ use std::io::{BufWriter, Read as IoRead, Seek, SeekFrom, Write};
 use std::path::Path;
 
 #[cfg(all_fields)]
-const FORMAT_MAGIC: u64 = 0xC0DE_C0DE_C0DE_000E;
+const FORMAT_MAGIC: u64 = 0xC0DE_C0DE_C0DE_0010;
 
 #[cfg(not(all_fields))]
-const FORMAT_MAGIC: u64 = 0xC0DE_C0DE_C0DE_000F;
+const FORMAT_MAGIC: u64 = 0xC0DE_C0DE_C0DE_0011;
 
 pub const TABLE_HEADER_SIZE: usize = 24; // 8 bytes magic + 8 bytes count + 8 bytes timestamp
 

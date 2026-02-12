@@ -16,6 +16,7 @@ const LOG_TARGET: &str = "    crates";
 define_rows! {
     VersionRow<'a> {
         pub id: VersionId,
+        #[allow(dead_code)]
         pub crate_id: CrateId,
         pub num: Version,
         pub downloads: u64,
@@ -214,5 +215,60 @@ define_table! {
                 has_lib: reader.read_bool(),
             }
         }
+    }
+}
+
+/// Lean version row containing only the fields needed for phase 4 scanning.
+///
+/// The full `VersionRow` has 14+ fields including large strings (description, features JSON, etc.)
+/// that require expensive UTF-8 validation. This lean variant reads only `id` and `crate_id`,
+/// skipping all other fields. For the ~0.1% of rows belonging to queried crates, the caller
+/// uses `get(index)` to do a full read.
+#[derive(Debug, Clone, Copy)]
+pub struct VersionRowLean {
+    pub id: VersionId,
+    pub crate_id: CrateId,
+}
+
+/// Reads only `id` and `crate_id` from a version row, skipping all remaining fields.
+fn read_row_lean(reader: &mut super::RowReader<'_>) -> VersionRowLean {
+    let id = VersionId(reader.read_u64());
+    let crate_id = CrateId(reader.read_u64());
+    reader.skip_version(); // num
+    reader.skip_u64(); // downloads
+    reader.skip_optional_u64(); // edition
+    reader.skip_datetime(); // created_at
+    reader.skip_datetime(); // updated_at
+    reader.skip_str(); // description
+    reader.skip_str(); // features
+    reader.skip_str(); // license
+    reader.skip_str(); // rust_version
+    reader.skip_bool(); // yanked
+    reader.skip_str(); // documentation
+    reader.skip_str(); // homepage
+    #[cfg(all_fields)]
+    {
+        reader.skip_str_vec(); // categories
+        reader.skip_str_vec(); // keywords
+        reader.skip_str(); // repository
+        reader.skip_str(); // links
+        reader.skip_str(); // bin_names
+        reader.skip_str(); // checksum
+        reader.skip_optional_u64(); // crate_size
+        reader.skip_optional_u64(); // published_by
+        reader.skip_bool(); // has_lib
+    }
+    VersionRowLean { id, crate_id }
+}
+
+impl VersionsTable {
+    /// Returns a lean iterator that only deserializes `id` and `crate_id` per row,
+    /// skipping all string fields (no UTF-8 validation) and version parsing.
+    pub fn iter_lean(&self) -> super::RowIter<'_, VersionRowLean, VersionsTableIndex> {
+        super::RowIter::new(
+            super::RowReader::new(&self.mmap[super::TABLE_HEADER_SIZE..]),
+            read_row_lean,
+            self.count,
+        )
     }
 }

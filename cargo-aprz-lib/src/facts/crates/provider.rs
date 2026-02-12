@@ -449,10 +449,13 @@ impl Provider {
         let cutoff_180 = self.now - chrono::Duration::days(180);
         let cutoff_365 = self.now - chrono::Duration::days(365);
 
-        for (row, index) in self.table_mgr.versions_table().iter() {
-            // For versions belonging to our crates: build complete version->crate map and count versions by age
-            if let Some(data) = crate_data.get_mut(&row.crate_id) {
-                let _ = all_version_to_crate.insert(row.id, row.crate_id);
+        for (lean_row, index) in self.table_mgr.versions_table().iter_lean() {
+            // For versions belonging to our crates: do a full row read to access num and created_at.
+            // Only ~0.1% of rows match, so the vast majority only pay for the lean read (2 u64s + skips).
+            if let Some(data) = crate_data.get_mut(&lean_row.crate_id) {
+                let row = self.table_mgr.versions_table().get(index);
+
+                let _ = all_version_to_crate.insert(lean_row.id, lean_row.crate_id);
                 if row.created_at >= cutoff_365 {
                     data.versions_last_365_days += 1;
                     if row.created_at >= cutoff_180 {
@@ -462,36 +465,37 @@ impl Provider {
                         }
                     }
                 }
-            }
-            // Check if this is one of our requested versions
-            if remaining_versions > 0
-                && let Some(version_map) = needed_versions.get(&row.crate_id)
-                && let Some(crate_ref) = version_map.get(&row.num)
-            {
-                let _ = version_data_map.insert(crate_ref.clone(), (row.id, index));
-                let _ = version_ids.insert(row.id);
-                remaining_versions -= 1;
-            }
 
-            // Check if this crate needs latest version resolution
-            if remaining_latest > 0 && need_latest_version.contains_key(&row.crate_id) {
-                use std::collections::hash_map::Entry;
-                match latest_version_indices.entry(row.crate_id) {
-                    Entry::Vacant(e) => {
-                        let _ = e.insert((index, row.num.clone()));
-                    }
-                    Entry::Occupied(mut e) => {
-                        let (_, current_best_version) = e.get();
-                        if &row.num > current_best_version {
-                            *e.get_mut() = (index, row.num.clone());
+                // Check if this is one of our requested versions
+                if remaining_versions > 0
+                    && let Some(version_map) = needed_versions.get(&lean_row.crate_id)
+                    && let Some(crate_ref) = version_map.get(&row.num)
+                {
+                    let _ = version_data_map.insert(crate_ref.clone(), (lean_row.id, index));
+                    let _ = version_ids.insert(lean_row.id);
+                    remaining_versions -= 1;
+                }
+
+                // Check if this crate needs latest version resolution
+                if remaining_latest > 0 && need_latest_version.contains_key(&lean_row.crate_id) {
+                    use std::collections::hash_map::Entry;
+                    match latest_version_indices.entry(lean_row.crate_id) {
+                        Entry::Vacant(e) => {
+                            let _ = e.insert((index, row.num.clone()));
+                        }
+                        Entry::Occupied(mut e) => {
+                            let (_, current_best_version) = e.get();
+                            if &row.num > current_best_version {
+                                *e.get_mut() = (index, row.num.clone());
+                            }
                         }
                     }
                 }
             }
 
             // Check if this is a version_id we need for dependency tracking
-            if remaining_mappings > 0 && needed_version_ids.contains(&row.id) {
-                let _ = version_id_to_crate_id.insert(row.id, row.crate_id);
+            if remaining_mappings > 0 && needed_version_ids.contains(&lean_row.id) {
+                let _ = version_id_to_crate_id.insert(lean_row.id, lean_row.crate_id);
                 remaining_mappings -= 1;
             }
 
@@ -523,7 +527,6 @@ impl Provider {
     /// - Teams: `team_id` to team profile
     ///
     /// These tables are fully loaded into memory for fast random access.
-    /// Loading in parallel provides ~3-4x speedup for large queries.
     fn phase5_load_lookup_tables(&self) -> LookupTables {
         let categories = self.load_categories();
         let keywords = self.load_keywords();
@@ -739,24 +742,24 @@ impl Provider {
         let mut crate_monthly: HashMap<CrateId, BTreeMap<(i32, u32), u64>> = hash_map_with_capacity(crate_data.len());
 
         for (row, _) in self.table_mgr.version_downloads_table().iter() {
-            let month_key = (row.date.year(), row.date.month());
-
-            // Aggregate per-version downloads for the specific queried versions
-            if version_ids.contains(&row.version_id) {
-                *version_monthly
-                    .entry(row.version_id)
-                    .or_default()
-                    .entry(month_key)
-                    .or_insert(0) += row.downloads;
-            }
-
-            // Aggregate per-crate downloads across all versions of our crates
+            // Check crate membership first — version_ids is always a subset of all_version_to_crate keys,
+            // so a single lookup handles the common rejection path (~99.99% of rows match neither).
             if let Some(&crate_id) = all_version_to_crate.get(&row.version_id) {
+                let month_key = (row.date.year(), row.date.month());
+
                 *crate_monthly
                     .entry(crate_id)
                     .or_default()
                     .entry(month_key)
                     .or_insert(0) += row.downloads;
+
+                if version_ids.contains(&row.version_id) {
+                    *version_monthly
+                        .entry(row.version_id)
+                        .or_default()
+                        .entry(month_key)
+                        .or_insert(0) += row.downloads;
+                }
             }
         }
 
