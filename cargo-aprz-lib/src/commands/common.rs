@@ -7,7 +7,7 @@ use crate::expr::{Risk, evaluate};
 use crate::facts::{Collector, CrateFacts, CrateRef, ProviderResult};
 use crate::metrics::flatten;
 use crate::reports::ReportableCrate;
-use crate::reports::{generate_console, generate_csv, generate_html, generate_json, generate_xlsx};
+use crate::reports::{ConsoleOutputMode, generate_console, generate_csv, generate_html, generate_json, generate_xlsx};
 use camino::Utf8PathBuf;
 use cargo_metadata::MetadataCommand;
 use chrono::{Local, Utc};
@@ -92,13 +92,18 @@ pub struct CommonArgs {
     #[arg(long, value_name = "PATH", help_heading = "Report Output")]
     pub json: Option<Utf8PathBuf>,
 
-    /// Output crate information to the console. This is the default if no other output options are given and --check is not specified.
-    #[arg(long, help_heading = "Report Output")]
-    pub console: bool,
+    /// Output crate information to the console, showing the specified sections (comma-separated: appraisal, reasons, metrics).
+    /// Defaults to showing all sections. If omitted entirely, console output is shown only when no other reports are generated.
+    #[arg(long, value_name = "SECTIONS", default_missing_value = "appraisal,reasons,metrics", num_args = 0..=1, help_heading = "Report Output")]
+    pub console: Option<String>,
 
-    /// Exit with status code 1 if any crate evaluation returns "not acceptable"
+    /// Exit with status code 1 if any crate is appraised as high risk
     #[arg(long)]
-    pub check: bool,
+    pub error_if_high_risk: bool,
+
+    /// Exit with status code 1 if any crate is appraised as medium or high risk
+    #[arg(long)]
+    pub error_if_medium_risk: bool,
 
     /// Ignore cached data and fetch everything fresh
     #[arg(long)]
@@ -111,8 +116,9 @@ pub struct Common<'a, H: super::Host> {
     pub metadata_cmd: MetadataCommand,
     host: &'a mut H,
     color: ColorMode,
-    check: bool,
-    console: bool,
+    error_if_high_risk: bool,
+    error_if_medium_risk: bool,
+    console: Option<ConsoleOutputMode>,
     html: Option<Utf8PathBuf>,
     excel: Option<Utf8PathBuf>,
     csv: Option<Utf8PathBuf>,
@@ -178,14 +184,17 @@ impl<'a, H: super::Host> Common<'a, H> {
         let mut metadata_cmd = MetadataCommand::new();
         let _ = metadata_cmd.manifest_path(&args.manifest_path);
 
+        let console = args.console.as_deref().map(parse_console_mode).transpose()?;
+
         Ok(Self {
             collector,
             config,
             metadata_cmd,
             host,
             color: args.color,
-            check: args.check,
-            console: args.console,
+            error_if_high_risk: args.error_if_high_risk,
+            error_if_medium_risk: args.error_if_medium_risk,
+            console,
             html: args.html.clone(),
             excel: args.excel.clone(),
             csv: args.csv.clone(),
@@ -284,7 +293,7 @@ impl<'a, H: super::Host> Common<'a, H> {
         // Flatten crate facts into metrics and optionally evaluate, creating ReportableCrate instances
         let has_expressions =
             !self.config.high_risk_if_any.is_empty() || !self.config.eval.is_empty();
-        let should_eval = has_expressions || self.check;
+        let should_eval = has_expressions || self.error_if_high_risk || self.error_if_medium_risk;
 
         let mut reportable_crates: Vec<ReportableCrate> = if should_eval {
             analyzable_crates
@@ -330,10 +339,16 @@ impl<'a, H: super::Host> Common<'a, H> {
 
         // Show console output if:
         // - --console flag is explicitly set, OR
-        // - No reports are being generated AND --check is not set
-        let show_console = self.console || (!generating_reports && !self.check);
+        // - No reports are being generated AND no --error-if flag is set
+        let error_if = self.error_if_high_risk || self.error_if_medium_risk;
+        let default_mode = ConsoleOutputMode::full();
+        let console_mode = match &self.console {
+            Some(mode) => Some(mode),
+            None if !generating_reports && !error_if => Some(&default_mode),
+            None => None,
+        };
 
-        if show_console && !reportable_crates.is_empty() {
+        if let Some(mode) = console_mode && !reportable_crates.is_empty() {
             let mut console_output = String::new();
             let use_colors = match self.color {
                 ColorMode::Always => true,
@@ -343,7 +358,7 @@ impl<'a, H: super::Host> Common<'a, H> {
                     stdout().is_terminal()
                 }
             };
-            _ = generate_console(&reportable_crates, use_colors, &mut console_output);
+            _ = generate_console(&reportable_crates, use_colors, mode, &mut console_output);
             let _ = write!(self.host.output(), "{console_output}");
         }
 
@@ -370,8 +385,19 @@ impl<'a, H: super::Host> Common<'a, H> {
             fs::write(filename, json_output)?;
         }
 
-        // If --check flag is set, return error if any crate is high risk
-        if self.check {
+        // If --error-if-medium-risk flag is set, return error if any crate is medium or high risk
+        if self.error_if_medium_risk {
+            let has_rejected = reportable_crates
+                .iter()
+                .any(|crate_info| crate_info.appraisal.as_ref().is_some_and(|eval| matches!(eval.risk, Risk::Medium | Risk::High)));
+
+            if has_rejected {
+                return Err(ohno::AppError::new("one or more crates were flagged as medium or high risk"));
+            }
+        }
+
+        // If --error-if-high-risk flag is set, return error if any crate is high risk
+        if self.error_if_high_risk {
             let has_rejected = reportable_crates
                 .iter()
                 .any(|crate_info| crate_info.appraisal.as_ref().is_some_and(|eval| eval.risk == Risk::High));
@@ -383,4 +409,26 @@ impl<'a, H: super::Host> Common<'a, H> {
 
         Ok(())
     }
+}
+
+/// Parse a comma-separated string of console output sections into a [`ConsoleOutputMode`].
+///
+/// Valid section names: `appraisal`, `reasons`, `metrics`.
+fn parse_console_mode(value: &str) -> Result<ConsoleOutputMode> {
+    let mut mode = ConsoleOutputMode { appraisal: false, reasons: false, metrics: false };
+
+    for section in value.split(',') {
+        match section.trim() {
+            "appraisal" => mode.appraisal = true,
+            "reasons" => mode.reasons = true,
+            "metrics" => mode.metrics = true,
+            other => {
+                return Err(ohno::AppError::new(format!(
+                    "unknown console section '{other}', expected: appraisal, reasons, metrics"
+                )));
+            }
+        }
+    }
+
+    Ok(mode)
 }

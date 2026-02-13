@@ -34,9 +34,6 @@ pub fn evaluate(
 ) -> Appraisal {
     let context = build_cel_context(metrics, now);
 
-    // Calculate available points up front so all paths can report them
-    let available_points: u32 = eval.iter().map(|e| e.points().unwrap_or(1)).sum();
-
     // Evaluate all high-risk expressions, capturing outcomes for each
     let mut high_risk_triggered = false;
     let mut high_risk_outcomes = Vec::with_capacity(high_risk_if_any.len());
@@ -58,13 +55,14 @@ pub fn evaluate(
     }
 
     if high_risk_triggered {
-        return Appraisal::new(Risk::High, high_risk_outcomes, available_points, 0, 0.0);
+        return Appraisal::new(Risk::High, high_risk_outcomes, 0, 0, 0.0);
     }
 
     if eval.is_empty() {
         return Appraisal::new(Risk::Low, high_risk_outcomes, 0, 0, 100.0);
     }
 
+    let mut available_points: u32 = 0;
     let mut awarded_points: u32 = 0;
     let mut outcomes = high_risk_outcomes;
     outcomes.reserve(eval.len());
@@ -75,9 +73,13 @@ pub fn evaluate(
         let disposition = match evaluate_expression(expr.program(), expr.name(), &context) {
             Ok(true) => {
                 awarded_points += points;
+                available_points += points;
                 ExpressionDisposition::True
             }
-            Ok(false) => ExpressionDisposition::False,
+            Ok(false) => {
+                available_points += points;
+                ExpressionDisposition::False
+            },
             Err(e) => ExpressionDisposition::Failed(e),
         };
         outcomes.push(ExpressionOutcome::new(
@@ -201,7 +203,8 @@ mod tests {
             test_timestamp(),
             MEDIUM_THRESHOLD,
             LOW_THRESHOLD,
-        );
+        )
+;
         assert_eq!(outcome.risk, Risk::Low);
         assert!(outcome.expression_outcomes.is_empty());
     }
@@ -628,5 +631,230 @@ mod tests {
         assert_eq!(&*outcome.expression_outcomes[1].name, "e2");
         assert_eq!(&*outcome.expression_outcomes[1].description, "bad");
         assert!(matches!(outcome.expression_outcomes[1].disposition, ExpressionDisposition::False));
+    }
+
+    // --- Points calculation tests ---
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_points_no_expressions_returns_zero_points_and_perfect_score() {
+        let outcome = evaluate(&[], &[], Vec::<Metric>::new(), test_timestamp(), MEDIUM_THRESHOLD, LOW_THRESHOLD);
+        assert_eq!(outcome.available_points, 0);
+        assert_eq!(outcome.awarded_points, 0);
+        assert!((outcome.score - 100.0).abs() < 0.001);
+        assert_eq!(outcome.risk, Risk::Low);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_points_high_risk_triggered_returns_zero_points() {
+        let expr = Expression::new("hr", None, "stars > 100", None).unwrap();
+        let metrics = vec![Metric::with_value(&STARS_DEF, MetricValue::UInt(150))];
+        let outcome = evaluate(&[expr], &[], &metrics, test_timestamp(), MEDIUM_THRESHOLD, LOW_THRESHOLD);
+        assert_eq!(outcome.risk, Risk::High);
+        assert_eq!(outcome.available_points, 0);
+        assert_eq!(outcome.awarded_points, 0);
+        assert!((outcome.score - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_points_high_risk_triggered_skips_eval_expressions() {
+        let hr = Expression::new("hr", None, "stars > 100", None).unwrap();
+        let ev = Expression::new("ev", None, "stars > 0", Some(5)).unwrap();
+        let metrics = vec![Metric::with_value(&STARS_DEF, MetricValue::UInt(150))];
+        let outcome = evaluate(&[hr], &[ev], &metrics, test_timestamp(), MEDIUM_THRESHOLD, LOW_THRESHOLD);
+        assert_eq!(outcome.risk, Risk::High);
+        // Only the high-risk outcome should be present; eval expression should not be evaluated
+        assert_eq!(outcome.expression_outcomes.len(), 1);
+        assert_eq!(&*outcome.expression_outcomes[0].name, "hr");
+        assert_eq!(outcome.available_points, 0);
+        assert_eq!(outcome.awarded_points, 0);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_points_single_eval_true_default_points() {
+        let expr = Expression::new("e1", None, "stars > 100", None).unwrap();
+        let metrics = vec![Metric::with_value(&STARS_DEF, MetricValue::UInt(150))];
+        let outcome = evaluate(&[], &[expr], &metrics, test_timestamp(), MEDIUM_THRESHOLD, LOW_THRESHOLD);
+        assert_eq!(outcome.available_points, 1);
+        assert_eq!(outcome.awarded_points, 1);
+        assert!((outcome.score - 100.0).abs() < 0.001);
+        assert_eq!(outcome.risk, Risk::Low);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_points_single_eval_false_default_points() {
+        let expr = Expression::new("e1", None, "stars > 200", None).unwrap();
+        let metrics = vec![Metric::with_value(&STARS_DEF, MetricValue::UInt(150))];
+        let outcome = evaluate(&[], &[expr], &metrics, test_timestamp(), MEDIUM_THRESHOLD, LOW_THRESHOLD);
+        assert_eq!(outcome.available_points, 1);
+        assert_eq!(outcome.awarded_points, 0);
+        assert!((outcome.score - 0.0).abs() < 0.001);
+        assert_eq!(outcome.risk, Risk::High);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_points_explicit_points_all_true() {
+        let e1 = Expression::new("e1", None, "stars > 100", Some(3)).unwrap();
+        let e2 = Expression::new("e2", None, "coverage > 50.0", Some(7)).unwrap();
+        let metrics = vec![
+            Metric::with_value(&STARS_DEF, MetricValue::UInt(150)),
+            Metric::with_value(&COVERAGE_DEF, MetricValue::Float(85.5)),
+        ];
+        let outcome = evaluate(&[], &[e1, e2], &metrics, test_timestamp(), MEDIUM_THRESHOLD, LOW_THRESHOLD);
+        assert_eq!(outcome.available_points, 10);
+        assert_eq!(outcome.awarded_points, 10);
+        assert!((outcome.score - 100.0).abs() < 0.001);
+        assert_eq!(outcome.risk, Risk::Low);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_points_explicit_points_mixed() {
+        // e1: 3 pts true, e2: 7 pts false => awarded 3/10 = 30% => Medium (exactly at medium threshold)
+        let e1 = Expression::new("e1", None, "stars > 100", Some(3)).unwrap();
+        let e2 = Expression::new("e2", None, "stars > 200", Some(7)).unwrap();
+        let metrics = vec![Metric::with_value(&STARS_DEF, MetricValue::UInt(150))];
+        let outcome = evaluate(&[], &[e1, e2], &metrics, test_timestamp(), MEDIUM_THRESHOLD, LOW_THRESHOLD);
+        assert_eq!(outcome.available_points, 10);
+        assert_eq!(outcome.awarded_points, 3);
+        assert!((outcome.score - 30.0).abs() < 0.001);
+        assert_eq!(outcome.risk, Risk::Medium);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_points_failed_expression_not_counted() {
+        // A failed expression should not contribute to available or awarded points
+        let e1 = Expression::new("e1", None, "stars > 100", Some(5)).unwrap();
+        let e2 = Expression::new("e2", None, "undefined_var > 0", Some(5)).unwrap();
+        let metrics = vec![Metric::with_value(&STARS_DEF, MetricValue::UInt(150))];
+        let outcome = evaluate(&[], &[e1, e2], &metrics, test_timestamp(), MEDIUM_THRESHOLD, LOW_THRESHOLD);
+        // Only e1's 5 points should be counted
+        assert_eq!(outcome.available_points, 5);
+        assert_eq!(outcome.awarded_points, 5);
+        assert!((outcome.score - 100.0).abs() < 0.001);
+        assert_eq!(outcome.risk, Risk::Low);
+        assert!(matches!(outcome.expression_outcomes[1].disposition, ExpressionDisposition::Failed(_)));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_points_all_expressions_fail_gives_perfect_score() {
+        // If every expression fails, available_points = 0, score defaults to 100
+        let e1 = Expression::new("e1", None, "undefined_a > 0", Some(3)).unwrap();
+        let e2 = Expression::new("e2", None, "undefined_b > 0", Some(7)).unwrap();
+        let outcome = evaluate(&[], &[e1, e2], Vec::<Metric>::new(), test_timestamp(), MEDIUM_THRESHOLD, LOW_THRESHOLD);
+        assert_eq!(outcome.available_points, 0);
+        assert_eq!(outcome.awarded_points, 0);
+        assert!((outcome.score - 100.0).abs() < 0.001);
+        assert_eq!(outcome.risk, Risk::Low);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_points_threshold_boundary_exactly_at_low() {
+        // Score exactly at low_risk_threshold (70.0) should be Low
+        // 7 of 10 points => 70%
+        let e1 = Expression::new("e1", None, "stars > 100", Some(7)).unwrap();
+        let e2 = Expression::new("e2", None, "stars > 200", Some(3)).unwrap();
+        let metrics = vec![Metric::with_value(&STARS_DEF, MetricValue::UInt(150))];
+        let outcome = evaluate(&[], &[e1, e2], &metrics, test_timestamp(), MEDIUM_THRESHOLD, LOW_THRESHOLD);
+        assert_eq!(outcome.available_points, 10);
+        assert_eq!(outcome.awarded_points, 7);
+        assert!((outcome.score - 70.0).abs() < 0.001);
+        assert_eq!(outcome.risk, Risk::Low);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_points_threshold_boundary_just_below_low() {
+        // Score just below low_risk_threshold => Medium
+        // 69 of 100 points => 69%
+        let e1 = Expression::new("e1", None, "stars > 100", Some(69)).unwrap();
+        let e2 = Expression::new("e2", None, "stars > 200", Some(31)).unwrap();
+        let metrics = vec![Metric::with_value(&STARS_DEF, MetricValue::UInt(150))];
+        let outcome = evaluate(&[], &[e1, e2], &metrics, test_timestamp(), MEDIUM_THRESHOLD, LOW_THRESHOLD);
+        assert_eq!(outcome.available_points, 100);
+        assert_eq!(outcome.awarded_points, 69);
+        assert!((outcome.score - 69.0).abs() < 0.01);
+        assert_eq!(outcome.risk, Risk::Medium);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_points_threshold_boundary_exactly_at_medium() {
+        // Score exactly at medium_risk_threshold (30.0) should be Medium
+        // 3 of 10 points => 30%
+        let e1 = Expression::new("e1", None, "stars > 100", Some(3)).unwrap();
+        let e2 = Expression::new("e2", None, "stars > 200", Some(7)).unwrap();
+        let metrics = vec![Metric::with_value(&STARS_DEF, MetricValue::UInt(150))];
+        let outcome = evaluate(&[], &[e1, e2], &metrics, test_timestamp(), MEDIUM_THRESHOLD, LOW_THRESHOLD);
+        assert!((outcome.score - 30.0).abs() < 0.001);
+        assert_eq!(outcome.risk, Risk::Medium);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_points_threshold_boundary_just_below_medium() {
+        // Score just below medium_risk_threshold => High
+        // 29 of 100 points => 29%
+        let e1 = Expression::new("e1", None, "stars > 100", Some(29)).unwrap();
+        let e2 = Expression::new("e2", None, "stars > 200", Some(71)).unwrap();
+        let metrics = vec![Metric::with_value(&STARS_DEF, MetricValue::UInt(150))];
+        let outcome = evaluate(&[], &[e1, e2], &metrics, test_timestamp(), MEDIUM_THRESHOLD, LOW_THRESHOLD);
+        assert!((outcome.score - 29.0).abs() < 0.01);
+        assert_eq!(outcome.risk, Risk::High);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_points_high_risk_false_outcomes_appear_with_eval_outcomes() {
+        // When high-risk expressions are all false, their outcomes should be combined with eval outcomes
+        let hr = Expression::new("hr1", None, "stars > 200", None).unwrap();
+        let ev = Expression::new("ev1", None, "stars > 100", Some(5)).unwrap();
+        let metrics = vec![Metric::with_value(&STARS_DEF, MetricValue::UInt(150))];
+        let outcome = evaluate(&[hr], &[ev], &metrics, test_timestamp(), MEDIUM_THRESHOLD, LOW_THRESHOLD);
+        assert_eq!(outcome.risk, Risk::Low);
+        assert_eq!(outcome.expression_outcomes.len(), 2);
+        assert_eq!(&*outcome.expression_outcomes[0].name, "hr1");
+        assert!(matches!(outcome.expression_outcomes[0].disposition, ExpressionDisposition::False));
+        assert_eq!(&*outcome.expression_outcomes[1].name, "ev1");
+        assert!(matches!(outcome.expression_outcomes[1].disposition, ExpressionDisposition::True));
+        assert_eq!(outcome.available_points, 5);
+        assert_eq!(outcome.awarded_points, 5);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_points_high_risk_only_no_eval_false_is_low_with_perfect_score() {
+        // High-risk expressions that are all false and no eval => Low risk, score 100
+        let hr1 = Expression::new("hr1", None, "stars > 200", None).unwrap();
+        let hr2 = Expression::new("hr2", None, "stars > 300", None).unwrap();
+        let metrics = vec![Metric::with_value(&STARS_DEF, MetricValue::UInt(150))];
+        let outcome = evaluate(&[hr1, hr2], &[], &metrics, test_timestamp(), MEDIUM_THRESHOLD, LOW_THRESHOLD);
+        assert_eq!(outcome.risk, Risk::Low);
+        assert_eq!(outcome.available_points, 0);
+        assert_eq!(outcome.awarded_points, 0);
+        assert!((outcome.score - 100.0).abs() < 0.001);
+        assert_eq!(outcome.expression_outcomes.len(), 2);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_points_multiple_high_risk_one_triggers() {
+        // Multiple high-risk expressions, only one true — still High risk, all outcomes captured
+        let hr1 = Expression::new("hr1", None, "stars > 200", None).unwrap();
+        let hr2 = Expression::new("hr2", None, "stars > 100", None).unwrap();
+        let metrics = vec![Metric::with_value(&STARS_DEF, MetricValue::UInt(150))];
+        let outcome = evaluate(&[hr1, hr2], &[], &metrics, test_timestamp(), MEDIUM_THRESHOLD, LOW_THRESHOLD);
+        assert_eq!(outcome.risk, Risk::High);
+        assert_eq!(outcome.expression_outcomes.len(), 2);
+        assert!(matches!(outcome.expression_outcomes[0].disposition, ExpressionDisposition::False));
+        assert!(matches!(outcome.expression_outcomes[1].disposition, ExpressionDisposition::True));
     }
 }

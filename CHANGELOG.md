@@ -1,13 +1,16 @@
 # cargo-aprz
 
-## 0.6.0 2026-02-12
+## 0.6.0 2026-02-13
 
 ### Added
 
 - Added the `--ignore-cached` option to force re-downloading crate data even if it's already cached locally.
+- Added the `--error-if-medium-risk` option to exit with status code 1 if any crate is appraised as medium or high risk.
+- Expanded the `--console` option to provide control over what gets output to the console.
 
 ### Changed
 
+- Renamed the `--check` option to `--error-if-high-risk`.
 - Improve crate table download perf.
 
 ## 0.5.0 2026-02-12

@@ -9,31 +9,60 @@ use crate::HashMap;
 use strum::IntoEnumIterator;
 use terminal_size::{Width, terminal_size};
 
-pub fn generate<W: Write>(crates: &[ReportableCrate], use_colors: bool, writer: &mut W) -> Result<()> {
+/// Controls which sections are included in console output.
+#[derive(Debug, Clone)]
+pub struct ConsoleOutputMode {
+    /// Show the appraisal risk level
+    pub appraisal: bool,
+    /// Show expression outcome reasons
+    pub reasons: bool,
+    /// Show individual metrics
+    pub metrics: bool,
+}
+
+impl ConsoleOutputMode {
+    /// All sections enabled.
+    #[must_use]
+    pub const fn full() -> Self {
+        Self { appraisal: true, reasons: true, metrics: true }
+    }
+}
+
+pub fn generate<W: Write>(crates: &[ReportableCrate], use_colors: bool, mode: &ConsoleOutputMode, writer: &mut W) -> Result<()> {
     for (index, crate_info) in crates.iter().enumerate() {
-        if index > 0 {
+        if index > 0 && (mode.metrics || mode.reasons) {
             writeln!(writer)?;
             writeln!(writer, "═══════════════════════════════════════")?;
             writeln!(writer)?;
         }
 
         // Show appraisal if one is available
-        if let Some(eval) = &crate_info.appraisal {
-            let status_str = common::format_appraisal_status(eval);
-            let colored_status: Cow<'_, str> = if use_colors {
-                match eval.risk {
-                    Risk::Low => status_str.green().bold().to_string().into(),
-                    Risk::Medium => status_str.yellow().bold().to_string().into(),
-                    Risk::High => status_str.red().bold().to_string().into(),
+        if mode.appraisal {
+            if let Some(eval) = &crate_info.appraisal {
+                let status_str = common::format_appraisal_status(eval);
+                let colored_status: Cow<'_, str> = if use_colors {
+                    match eval.risk {
+                        Risk::Low => status_str.green().bold().to_string().into(),
+                        Risk::Medium => status_str.yellow().bold().to_string().into(),
+                        Risk::High => status_str.red().bold().to_string().into(),
+                    }
+                } else {
+                    Cow::Owned(status_str)
+                };
+                writeln!(writer, "{} v{} is appraised as {colored_status}", crate_info.name, crate_info.version)?;
+
+                if mode.reasons {
+                    for outcome in &eval.expression_outcomes {
+                        writeln!(writer, "  {}", common::outcome_icon_name(outcome))?;
+                    }
                 }
             } else {
-                Cow::Owned(status_str)
-            };
-            writeln!(writer, "{} v{} is appraised as {colored_status}", crate_info.name, crate_info.version)?;
-
-            for outcome in &eval.expression_outcomes {
-                writeln!(writer, "  {}", common::outcome_icon_name(outcome))?;
+                writeln!(writer, "{} v{} was not appraised", crate_info.name, crate_info.version)?;
             }
+        }
+
+        if !mode.metrics {
+            continue;
         }
 
         // Build lookup map for quick metric access
@@ -182,7 +211,7 @@ mod tests {
     fn test_generate_empty_crates() {
         let crates: Vec<ReportableCrate> = vec![];
         let mut output = String::new();
-        let result = generate(&crates, false, &mut output);
+        let result = generate(&crates, false, &ConsoleOutputMode::full(), &mut output);
         result.unwrap();
         assert_eq!(output, "");
     }
@@ -191,7 +220,7 @@ mod tests {
     fn test_generate_single_crate_no_evaluation() {
         let crates = vec![create_test_crate("test_crate", "1.0.0", None)];
         let mut output = String::new();
-        let result = generate(&crates, false, &mut output);
+        let result = generate(&crates, false, &ConsoleOutputMode::full(), &mut output);
         result.unwrap();
         // Output should contain crate information but no evaluation
         assert!(!output.contains("Evaluation Result"));
@@ -209,7 +238,7 @@ mod tests {
         };
         let crates = vec![create_test_crate("test_crate", "1.0.0", Some(eval))];
         let mut output = String::new();
-        let result = generate(&crates, false, &mut output);
+        let result = generate(&crates, false, &ConsoleOutputMode::full(), &mut output);
         result.unwrap();
         assert!(output.contains("appraised as"));
         assert!(output.contains("LOW RISK"));
@@ -226,7 +255,7 @@ mod tests {
         };
         let crates = vec![create_test_crate("test_crate", "1.0.0", Some(eval))];
         let mut output = String::new();
-        let result = generate(&crates, false, &mut output);
+        let result = generate(&crates, false, &ConsoleOutputMode::full(), &mut output);
         result.unwrap();
         assert!(output.contains("appraised as"));
         assert!(output.contains("HIGH RISK"));
@@ -236,7 +265,7 @@ mod tests {
     fn test_generate_multiple_crates() {
         let crates = vec![create_test_crate("zebra", "1.0.0", None), create_test_crate("alpha", "2.0.0", None)];
         let mut output = String::new();
-        let result = generate(&crates, false, &mut output);
+        let result = generate(&crates, false, &ConsoleOutputMode::full(), &mut output);
         result.unwrap();
         // Should have separator between crates
         assert!(output.contains("═══════════════════════════════════════"));
@@ -253,7 +282,7 @@ mod tests {
         };
         let crates = vec![create_test_crate("test", "1.0.0", Some(eval))];
         let mut output = String::new();
-        let result = generate(&crates, false, &mut output);
+        let result = generate(&crates, false, &ConsoleOutputMode::full(), &mut output);
         result.unwrap();
         // Should not contain ANSI color codes
         assert!(!output.contains("\x1b["));

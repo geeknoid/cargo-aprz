@@ -274,12 +274,12 @@ async fn test_crates_command_nonexistent_version() {
 }
 
 // ---------------------------------------------------------------------------
-// Line 310: should_eval branch — --check triggers expression evaluation
-// and produces ReportableCrate with an evaluation result.
+// Line 310: should_eval branch — --error-if-high-risk triggers expression
+// evaluation and produces ReportableCrate with an evaluation result.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn test_crates_command_with_check_flag() {
+async fn test_crates_command_with_error_if_high_risk_flag() {
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
     let json_path = temp_dir.path().join("report.json");
 
@@ -291,7 +291,7 @@ async fn test_crates_command_with_check_flag() {
             "aprz",
             "crates",
             "serde@1.0.200",
-            "--check",
+            "--error-if-high-risk",
             "--json",
             json_path.to_str().expect("valid path"),
             "--color",
@@ -300,8 +300,8 @@ async fn test_crates_command_with_check_flag() {
     )
     .await;
 
-    // --check with no expressions means evaluation succeeds (nothing to deny)
-    assert!(result.is_ok(), "crates --check should succeed: {result:?}");
+    // --error-if-high-risk with no expressions means evaluation succeeds (nothing to deny)
+    assert!(result.is_ok(), "crates --error-if-high-risk should succeed: {result:?}");
 
     let json_content = std::fs::read_to_string(&json_path).expect("read JSON");
     let parsed: serde_json::Value = serde_json::from_str(&json_content).expect("valid JSON");
@@ -310,7 +310,7 @@ async fn test_crates_command_with_check_flag() {
     assert_eq!(crates.len(), 1);
     assert_eq!(crates[0]["name"].as_str(), Some("serde"));
 
-    // With --check, the appraisal field should be present
+    // With --error-if-high-risk, the appraisal field should be present
     let eval = &crates[0]["appraisal"];
-    assert!(!eval.is_null(), "appraisal should be present when --check is used");
+    assert!(!eval.is_null(), "appraisal should be present when --error-if-high-risk is used");
 }

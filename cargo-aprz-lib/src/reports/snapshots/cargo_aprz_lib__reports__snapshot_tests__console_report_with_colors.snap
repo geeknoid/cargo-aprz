@@ -48,6 +48,7 @@ serde v1.0.195 is appraised as [1m[31mHIGH RISK (score = 0, awarded points = 0
 
 ═══════════════════════════════════════
 
+anyhow v1.0.75 was not appraised
 
 [1mMetadata[0m
   crate.name     : anyhow

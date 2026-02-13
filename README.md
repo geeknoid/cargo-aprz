@@ -233,8 +233,9 @@ low_risk_threshold = 70.0
 ### Expression Checks in CI
 
 If you want to use `cargo-aprz` in a CI pipeline to detect if any unsavory dependencies are being added to your project, you
-can use the `--check` option to make `cargo-aprz` return a non-zero exit code if any of the crates being appraised are
-flagged as high risk based on the configured expressions.
+can use the `--error-if-high-risk` option to make `cargo-aprz` return a non-zero exit code if any of the crates being appraised are
+flagged as high risk based on the configured expressions. Similarly, `--error-if-medium-risk` returns a non-zero exit code
+if any crate is flagged as medium or high risk.
 
 ## Troubleshooting
 

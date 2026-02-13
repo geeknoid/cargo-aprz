@@ -34,6 +34,7 @@ mod html;
 mod json;
 mod reportable_crate;
 
+pub use console::ConsoleOutputMode;
 pub use console::generate as generate_console;
 pub use csv::generate as generate_csv;
 pub use excel::generate as generate_xlsx;
@@ -183,7 +184,7 @@ mod snapshot_tests {
     fn test_console_report_with_colors() {
         let crates = create_test_crates();
         let mut output = String::new();
-        generate_console(&crates, true, &mut output).unwrap();
+        generate_console(&crates, true, &ConsoleOutputMode::full(), &mut output).unwrap();
         insta::assert_snapshot!(output);
     }
 
@@ -192,7 +193,7 @@ mod snapshot_tests {
     fn test_console_report_no_colors() {
         let crates = create_test_crates();
         let mut output = String::new();
-        generate_console(&crates, false, &mut output).unwrap();
+        generate_console(&crates, false, &ConsoleOutputMode::full(), &mut output).unwrap();
         insta::assert_snapshot!(output);
     }
 
@@ -245,7 +246,7 @@ mod snapshot_tests {
     fn test_empty_crates_console() {
         let crates: Vec<ReportableCrate> = vec![];
         let mut output = String::new();
-        generate_console(&crates, false, &mut output).unwrap();
+        generate_console(&crates, false, &ConsoleOutputMode::full(), &mut output).unwrap();
         insta::assert_snapshot!(output);
     }
 
@@ -309,7 +310,7 @@ mod snapshot_tests {
 
         // Test in all formats
         let mut console_output = String::new();
-        generate_console(&crates, false, &mut console_output).unwrap();
+        generate_console(&crates, false, &ConsoleOutputMode::full(), &mut console_output).unwrap();
         insta::assert_snapshot!("single_crate_console", console_output);
 
         let mut csv_output = String::new();
