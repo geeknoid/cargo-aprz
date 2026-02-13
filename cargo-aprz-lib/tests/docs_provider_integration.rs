@@ -1,6 +1,6 @@
 //! Integration tests for the docs provider using real fixtures and wiremock
 
-use cargo_aprz_lib::facts::docs::{DocsData, Provider};
+use cargo_aprz_lib::facts::docs::{DocMetricState, DocsData, DocsMetrics, Provider};
 use cargo_aprz_lib::facts::{CrateSpec, Progress, ProviderResult, RequestTracker};
 use chrono::Utc;
 use semver::Version;
@@ -57,7 +57,7 @@ async fn test_docs_provider_with_fixture() {
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
 
     // Create provider with mock server URL
-    let provider = Provider::new(temp_dir.path(), Utc::now(), Some(&mock_server.uri()));
+    let provider = Provider::new(temp_dir.path(), Utc::now(), false, Some(&mock_server.uri()));
 
     // Create crate spec for anyhow 1.0.100
     let crate_spec = CrateSpec::from_arcs(Arc::from("anyhow"), Arc::new(Version::parse("1.0.100").unwrap()));
@@ -109,7 +109,7 @@ async fn test_docs_provider_not_found() {
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
 
     // Create provider with mock server URL
-    let provider = Provider::new(temp_dir.path(), Utc::now(), Some(&mock_server.uri()));
+    let provider = Provider::new(temp_dir.path(), Utc::now(), false, Some(&mock_server.uri()));
 
     // Create crate spec for nonexistent crate
     let crate_spec = CrateSpec::from_arcs(Arc::from("nonexistent"), Arc::new(Version::parse("1.0.0").unwrap()));
@@ -125,4 +125,114 @@ async fn test_docs_provider_not_found() {
 
     // Should be CrateNotFound
     assert!(matches!(result_data, ProviderResult::CrateNotFound(_)));
+}
+
+/// Helper to create a sentinel `DocsData` for cache tests
+fn make_sentinel_docs_data() -> DocsData {
+    DocsData {
+        timestamp: Utc::now(),
+        metrics: DocMetricState::Found(DocsMetrics {
+            doc_coverage_percentage: 42.0,
+            public_api_elements: 100,
+            undocumented_elements: 58,
+            examples_in_docs: 5,
+            has_crate_level_docs: true,
+            broken_doc_links: 0,
+        }),
+    }
+}
+
+#[tokio::test]
+async fn test_docs_provider_uses_cache() {
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+
+    // Pre-populate cache with sentinel data
+    let cached_data = make_sentinel_docs_data();
+    let cache_path = temp_dir.path().join("anyhow@1.0.100.json");
+    let json = serde_json::to_string(&cached_data).expect("serialize");
+    fs::write(&cache_path, json).expect("write cache file");
+
+    // Create provider with ignore_cached=false and no mock server (would fail if it tried to fetch)
+    let mock_server = MockServer::start().await;
+    let provider = Provider::new(temp_dir.path(), Utc::now(), false, Some(&mock_server.uri()));
+
+    let crate_spec = CrateSpec::from_arcs(Arc::from("anyhow"), Arc::new(Version::parse("1.0.100").unwrap()));
+    let progress = Arc::new(NoOpProgress) as Arc<dyn Progress>;
+    let tracker = RequestTracker::new(progress.as_ref());
+    let results: Vec<_> = provider.get_docs_data(vec![crate_spec], &tracker).await.collect();
+
+    assert_eq!(results.len(), 1);
+    match &results[0].1 {
+        ProviderResult::Found(data) => {
+            // Verify we got the sentinel cached data back
+            if let DocMetricState::Found(metrics) = &data.metrics {
+                assert!((metrics.doc_coverage_percentage - 42.0).abs() < f64::EPSILON);
+            } else {
+                panic!("Expected Found metrics from cache");
+            }
+        }
+        other => panic!("Expected Found, got {other:?}"),
+    }
+
+    // Verify no requests were made to the server
+    let requests = mock_server.received_requests().await.unwrap();
+    assert!(requests.is_empty(), "Expected no HTTP requests when using cache");
+}
+
+#[tokio::test]
+async fn test_docs_provider_ignore_cached_bypasses_cache() {
+    if !fixture_exists() {
+        eprintln!("Skipping test: fixture file {FIXTURE_PATH} not found");
+        return;
+    }
+
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+
+    // Pre-populate cache with sentinel data
+    let cached_data = make_sentinel_docs_data();
+    let cache_path = temp_dir.path().join("anyhow@1.0.100.json");
+    let json = serde_json::to_string(&cached_data).expect("serialize");
+    fs::write(&cache_path, json).expect("write cache file");
+
+    // Set up mock server with real fixture
+    let zst_data = fs::read(FIXTURE_PATH).expect("Failed to read fixture file");
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/crate/anyhow/1.0.100/json"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(zst_data)
+                .insert_header("content-type", "application/zstd"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    // Create provider with ignore_cached=true
+    let provider = Provider::new(temp_dir.path(), Utc::now(), true, Some(&mock_server.uri()));
+
+    let crate_spec = CrateSpec::from_arcs(Arc::from("anyhow"), Arc::new(Version::parse("1.0.100").unwrap()));
+    let progress = Arc::new(NoOpProgress) as Arc<dyn Progress>;
+    let tracker = RequestTracker::new(progress.as_ref());
+    let results: Vec<_> = provider.get_docs_data(vec![crate_spec], &tracker).await.collect();
+
+    assert_eq!(results.len(), 1);
+    match &results[0].1 {
+        ProviderResult::Found(data) => {
+            // Verify we got fresh data, not the sentinel
+            if let DocMetricState::Found(metrics) = &data.metrics {
+                assert!(
+                    (metrics.doc_coverage_percentage - 42.0).abs() > f64::EPSILON,
+                    "Expected fresh data different from sentinel, got {}",
+                    metrics.doc_coverage_percentage
+                );
+            } else {
+                panic!("Expected Found metrics from fresh fetch");
+            }
+        }
+        other => panic!("Expected Found, got {other:?}"),
+    }
+
+    // Verify a request WAS made to the server
+    let requests = mock_server.received_requests().await.unwrap();
+    assert!(!requests.is_empty(), "Expected HTTP request when ignore_cached=true");
 }

@@ -278,21 +278,24 @@ impl TableMgr {
         tables_root: impl AsRef<Path>,
         max_ttl: Duration,
         now: DateTime<Utc>,
+        ignore_cached: bool,
         progress: Arc<dyn Progress>,
     ) -> Result<Self> {
         let tables_root = tables_root.as_ref();
 
-        log::info!("Opening the crates database");
-        let result = Self::open_tables_from_scratch(tables_root, max_ttl, now, progress.as_ref());
+        if !ignore_cached {
+            log::info!("Opening the crates database");
+            let result = Self::open_tables_from_scratch(tables_root, max_ttl, now, progress.as_ref());
 
-        if let Ok(ref table_mgr) = result {
-            log::debug!(
-                target: LOG_TARGET,
-                "successfully opened cached crates.io tables from {} (created at {})",
-                tables_root.display(),
-                table_mgr.created_at()
-            );
-            return result;
+            if let Ok(ref table_mgr) = result {
+                log::debug!(
+                    target: LOG_TARGET,
+                    "successfully opened cached crates.io tables from {} (created at {})",
+                    tables_root.display(),
+                    table_mgr.created_at()
+                );
+                return result;
+            }
         }
 
         log::info!(target: LOG_TARGET, "Cached crates database not found or out of date, downloading a fresh copy");

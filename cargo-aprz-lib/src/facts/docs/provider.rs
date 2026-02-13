@@ -31,12 +31,13 @@ pub struct Provider {
     cache_dir: Arc<Path>,
     base_url: String,
     now: DateTime<Utc>,
+    ignore_cached: bool,
 }
 
 impl Provider {
     /// Create a new docs provider
     #[must_use]
-    pub fn new(cache_dir: impl AsRef<Path>, now: DateTime<Utc>, base_url: Option<&str>) -> Self {
+    pub fn new(cache_dir: impl AsRef<Path>, now: DateTime<Utc>, ignore_cached: bool, base_url: Option<&str>) -> Self {
         let client = reqwest::Client::builder()
             .user_agent("cargo-aprz")
             .build()
@@ -47,6 +48,7 @@ impl Provider {
             cache_dir: Arc::from(cache_dir.as_ref()),
             base_url: base_url.unwrap_or(DEFAULT_DOCS_BASE_URL).to_string(),
             now,
+            ignore_cached,
         }
     }
 
@@ -86,7 +88,9 @@ impl Provider {
     }
 
     async fn fetch_docs_for_crate_core(&self, crate_spec: &CrateSpec) -> ProviderResult<DocsData> {
-        if let Ok(cached_data) = cache_doc::load::<DocsData>(&self.get_cache_path(crate_spec), format!("docs for crate {crate_spec}")) {
+        if !self.ignore_cached
+            && let Ok(cached_data) = cache_doc::load::<DocsData>(&self.get_cache_path(crate_spec), format!("docs for crate {crate_spec}"))
+        {
             return ProviderResult::Found(cached_data);
         }
 

@@ -62,6 +62,7 @@ async fn test_coverage_provider_with_fixture() {
         temp_dir.path(),
         core::time::Duration::from_secs(365 * 24 * 3600), // 1 year TTL
         Utc::now(),
+        false,
         Some(&mock_server.uri()),
     );
 
@@ -137,6 +138,7 @@ async fn test_coverage_provider_not_found_main() {
         temp_dir.path(),
         core::time::Duration::from_secs(365 * 24 * 3600),
         Utc::now(),
+        false,
         Some(&mock_server.uri()),
     );
 
@@ -193,6 +195,7 @@ async fn test_coverage_provider_unknown_coverage() {
         temp_dir.path(),
         core::time::Duration::from_secs(365 * 24 * 3600),
         Utc::now(),
+        false,
         Some(&mock_server.uri()),
     );
 
@@ -210,4 +213,120 @@ async fn test_coverage_provider_unknown_coverage() {
     assert_eq!(results.len(), 1);
     let (_, result_data) = &results[0];
     assert!(matches!(result_data, ProviderResult::CrateNotFound(_)));
+}
+
+#[tokio::test]
+async fn test_coverage_provider_uses_cache() {
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+
+    // Pre-populate cache with sentinel data at the expected path: {cache_dir}/github.com/test/repo.json
+    let cache_subdir = temp_dir.path().join("github.com").join("test");
+    fs::create_dir_all(&cache_subdir).expect("create cache subdirs");
+    let cached_data = CoverageData {
+        timestamp: Utc::now(),
+        code_coverage_percentage: 42.0,
+    };
+    let cache_path = cache_subdir.join("repo.json");
+    let json = serde_json::to_string(&cached_data).expect("serialize");
+    fs::write(&cache_path, json).expect("write cache file");
+
+    // Create provider with ignore_cached=false and long TTL
+    let mock_server = MockServer::start().await;
+    let provider = Provider::new(
+        temp_dir.path(),
+        core::time::Duration::from_secs(365 * 24 * 3600),
+        Utc::now(),
+        false,
+        Some(&mock_server.uri()),
+    );
+
+    let repo_url = Url::parse("https://github.com/test/repo").expect("parse URL");
+    let repo_spec = RepoSpec::parse(repo_url).expect("parse repo spec");
+    let crate_spec = CrateSpec::from_arcs_with_repo(Arc::from("testrepo"), Arc::new(Version::parse("1.0.0").unwrap()), repo_spec);
+
+    let progress = Arc::new(NoOpProgress) as Arc<dyn Progress>;
+    let tracker = RequestTracker::new(progress.as_ref());
+    let results: Vec<_> = provider.get_coverage_data(vec![crate_spec], &tracker).await.collect();
+
+    assert_eq!(results.len(), 1);
+    match &results[0].1 {
+        ProviderResult::Found(data) => {
+            assert!(
+                (data.code_coverage_percentage - 42.0).abs() < f64::EPSILON,
+                "Expected sentinel value from cache"
+            );
+        }
+        other => panic!("Expected Found, got {other:?}"),
+    }
+
+    // Verify no requests were made to the server
+    let requests = mock_server.received_requests().await.unwrap();
+    assert!(requests.is_empty(), "Expected no HTTP requests when using cache");
+}
+
+#[tokio::test]
+async fn test_coverage_provider_ignore_cached_bypasses_cache() {
+    if !fixture_exists() {
+        eprintln!("Skipping test: fixture file {FIXTURE_PATH} not found");
+        return;
+    }
+
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+
+    // Pre-populate cache with sentinel data
+    let cache_subdir = temp_dir.path().join("github.com").join("microsoft");
+    fs::create_dir_all(&cache_subdir).expect("create cache subdirs");
+    let cached_data = CoverageData {
+        timestamp: Utc::now(),
+        code_coverage_percentage: 42.0,
+    };
+    let cache_path = cache_subdir.join("oxidizer.json");
+    let json = serde_json::to_string(&cached_data).expect("serialize");
+    fs::write(&cache_path, json).expect("write cache file");
+
+    // Set up mock server with real fixture
+    let svg_data = fs::read(FIXTURE_PATH).expect("read fixture");
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/gh/microsoft/oxidizer/branch/main/graph/badge.svg"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(svg_data)
+                .insert_header("content-type", "image/svg+xml"),
+        )
+        .mount(&mock_server)
+        .await;
+
+    // Create provider with ignore_cached=true
+    let provider = Provider::new(
+        temp_dir.path(),
+        core::time::Duration::from_secs(365 * 24 * 3600),
+        Utc::now(),
+        true,
+        Some(&mock_server.uri()),
+    );
+
+    let repo_url = Url::parse("https://github.com/microsoft/oxidizer").expect("parse URL");
+    let repo_spec = RepoSpec::parse(repo_url).expect("parse repo spec");
+    let crate_spec = CrateSpec::from_arcs_with_repo(Arc::from("oxidizer"), Arc::new(Version::parse("1.0.0").unwrap()), repo_spec);
+
+    let progress = Arc::new(NoOpProgress) as Arc<dyn Progress>;
+    let tracker = RequestTracker::new(progress.as_ref());
+    let results: Vec<_> = provider.get_coverage_data(vec![crate_spec], &tracker).await.collect();
+
+    assert_eq!(results.len(), 1);
+    match &results[0].1 {
+        ProviderResult::Found(data) => {
+            assert!(
+                (data.code_coverage_percentage - 42.0).abs() > f64::EPSILON,
+                "Expected fresh data different from sentinel, got {}",
+                data.code_coverage_percentage
+            );
+        }
+        other => panic!("Expected Found, got {other:?}"),
+    }
+
+    // Verify a request WAS made to the server
+    let requests = mock_server.received_requests().await.unwrap();
+    assert!(!requests.is_empty(), "Expected HTTP request when ignore_cached=true");
 }

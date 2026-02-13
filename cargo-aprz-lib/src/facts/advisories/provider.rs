@@ -35,15 +35,26 @@ pub struct LastSynced {
 const DATABASE_FETCH_TIMEOUT: Duration = Duration::from_secs(60);
 
 impl Provider {
-    pub async fn new(cache_dir: impl AsRef<Path>, cache_ttl: Duration, progress: Arc<dyn Progress>, now: DateTime<Utc>) -> Result<Self> {
+    pub async fn new(
+        cache_dir: impl AsRef<Path>,
+        cache_ttl: Duration,
+        progress: Arc<dyn Progress>,
+        now: DateTime<Utc>,
+        ignore_cached: bool,
+    ) -> Result<Self> {
         let cache_dir = cache_dir.as_ref();
         let sync_path = cache_dir.join("last_synced.json");
         let repo_path = cache_dir.join("repo");
 
-        let timestamp = if let Some(data) =
+        let timestamp = if ignore_cached {
+            None
+        } else {
             cache_doc::load_with_ttl(&sync_path, cache_ttl, |data: &LastSynced| data.timestamp, now, "advisory database")
-        {
-            data.timestamp
+                .map(|data| data.timestamp)
+        };
+
+        let timestamp = if let Some(ts) = timestamp {
+            ts
         } else {
             download_db(&repo_path, progress.as_ref())
                 .await

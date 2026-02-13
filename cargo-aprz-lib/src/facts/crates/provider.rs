@@ -77,11 +77,12 @@ impl Provider {
         cache_ttl: Duration,
         progress: Arc<dyn Progress>,
         now: DateTime<Utc>,
+        ignore_cached: bool,
         dump_url: Option<&str>,
     ) -> Result<Self> {
         let cache_dir = cache_dir.as_ref().to_path_buf();
         let url = Url::parse(dump_url.unwrap_or(DEFAULT_DUMP_URL))?;
-        let table_mgr = TableMgr::new(&url, &cache_dir, cache_ttl, now, progress).await?;
+        let table_mgr = TableMgr::new(&url, &cache_dir, cache_ttl, now, ignore_cached, progress).await?;
 
         Ok(Self {
             table_mgr: Arc::new(table_mgr),

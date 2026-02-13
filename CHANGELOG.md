@@ -1,6 +1,10 @@
 # cargo-aprz
 
-## 0.6.0 TBD
+## 0.6.0 2026-02-12
+
+### Added
+
+- Added the `--ignore-cached` option to force re-downloading crate data even if it's already cached locally.
 
 ### Changed
 

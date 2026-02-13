@@ -46,9 +46,15 @@ async fn shared_provider() -> &'static Provider {
             core::mem::forget(temp_dir);
 
             let progress = Arc::new(NoOpProgress) as Arc<dyn Progress>;
-            let provider = Provider::new(&cache_path, core::time::Duration::from_secs(365 * 24 * 3600), progress, Utc::now())
-                .await
-                .expect("Failed to create advisory provider");
+            let provider = Provider::new(
+                &cache_path,
+                core::time::Duration::from_secs(365 * 24 * 3600),
+                progress,
+                Utc::now(),
+                false,
+            )
+            .await
+            .expect("Failed to create advisory provider");
 
             SharedProvider {
                 provider,
@@ -235,6 +241,7 @@ async fn test_advisory_provider_cache_reuse() {
         core::time::Duration::from_secs(365 * 24 * 3600),
         Arc::clone(&progress),
         Utc::now(),
+        false,
     )
     .await
     .expect("First provider creation should succeed");
@@ -247,6 +254,7 @@ async fn test_advisory_provider_cache_reuse() {
         core::time::Duration::from_secs(365 * 24 * 3600),
         progress,
         Utc::now(),
+        false,
     )
     .await
     .expect("Second provider creation with cache should succeed");

@@ -50,6 +50,7 @@ impl Collector {
         codebase_cache_ttl: Duration,
         coverage_cache_ttl: Duration,
         advisories_cache_ttl: Duration,
+        ignore_cached: bool,
         now: DateTime<Utc>,
         progress: impl Progress + 'static,
     ) -> Result<Self> {
@@ -67,13 +68,13 @@ impl Collector {
         let cache_lock = acquire_cache_lock(cache_dir.as_ref()).await?;
 
         Ok(Self {
-            crates_provider: super::crates::Provider::new(&crates_cache_dir, crates_cache_ttl, Arc::clone(&progress), now, None).await?,
-            hosting_provider: super::hosting::Provider::new(github_token, codeberg_token, &hosting_cache_dir, hosting_cache_ttl, now)?,
-            codebase_provider: super::codebase::Provider::new(&codebase_cache_dir, codebase_cache_ttl, now),
-            coverage_provider: super::coverage::Provider::new(&coverage_cache_dir, coverage_cache_ttl, now, None),
-            advisories_provider: super::advisories::Provider::new(&advisories_cache_dir, advisories_cache_ttl, Arc::clone(&progress), now)
+            crates_provider: super::crates::Provider::new(&crates_cache_dir, crates_cache_ttl, Arc::clone(&progress), now, ignore_cached, None).await?,
+            hosting_provider: super::hosting::Provider::new(github_token, codeberg_token, &hosting_cache_dir, hosting_cache_ttl, now, ignore_cached)?,
+            codebase_provider: super::codebase::Provider::new(&codebase_cache_dir, codebase_cache_ttl, now, ignore_cached),
+            coverage_provider: super::coverage::Provider::new(&coverage_cache_dir, coverage_cache_ttl, now, ignore_cached, None),
+            advisories_provider: super::advisories::Provider::new(&advisories_cache_dir, advisories_cache_ttl, Arc::clone(&progress), now, ignore_cached)
                 .await?,
-            docs_provider: super::docs::Provider::new(&docs_cache_dir, now, None),
+            docs_provider: super::docs::Provider::new(&docs_cache_dir, now, ignore_cached, None),
             progress,
             _cache_lock: cache_lock,
         })

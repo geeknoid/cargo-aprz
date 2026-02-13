@@ -26,6 +26,7 @@ pub struct Provider {
     cache_dir: Arc<Path>,
     cache_ttl: Duration,
     now: DateTime<Utc>,
+    ignore_cached: bool,
 }
 
 const METADATA_TIMEOUT: Duration = Duration::from_mins(5);
@@ -47,11 +48,12 @@ struct RepoData {
 
 impl Provider {
     #[must_use]
-    pub fn new(cache_dir: impl AsRef<Path>, cache_ttl: Duration, now: DateTime<Utc>) -> Self {
+    pub fn new(cache_dir: impl AsRef<Path>, cache_ttl: Duration, now: DateTime<Utc>, ignore_cached: bool) -> Self {
         Self {
             cache_dir: Arc::from(cache_dir.as_ref()),
             cache_ttl,
             now,
+            ignore_cached,
         }
     }
 
@@ -82,7 +84,10 @@ impl Provider {
                     let crate_name = crate_spec.name();
                     let data_path = provider.get_data_path(crate_name, &repo_spec);
 
-                    if let Some(cached_data) = cache_doc::load_with_ttl(
+                    if provider.ignore_cached {
+                        any_missing = true;
+                        break;
+                    } else if let Some(cached_data) = cache_doc::load_with_ttl(
                         &data_path,
                         provider.cache_ttl,
                         |data: &CodebaseData| data.timestamp,

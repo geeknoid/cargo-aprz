@@ -99,6 +99,10 @@ pub struct CommonArgs {
     /// Exit with status code 1 if any crate evaluation returns "not acceptable"
     #[arg(long)]
     pub check: bool,
+
+    /// Ignore cached data and fetch everything fresh
+    #[arg(long)]
+    pub ignore_cached: bool,
 }
 
 pub struct Common<'a, H: super::Host> {
@@ -164,6 +168,7 @@ impl<'a, H: super::Host> Common<'a, H> {
             config.codebase_cache_ttl,
             config.coverage_cache_ttl,
             config.advisories_cache_ttl,
+            args.ignore_cached,
             Utc::now(),
             progress_reporter,
         )

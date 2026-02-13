@@ -144,6 +144,7 @@ pub struct Provider {
     cache_dir: Arc<Path>,
     cache_ttl: Duration,
     now: DateTime<Utc>,
+    ignore_cached: bool,
 }
 
 impl Provider {
@@ -153,6 +154,7 @@ impl Provider {
         cache_dir: impl AsRef<Path>,
         cache_ttl: Duration,
         now: DateTime<Utc>,
+        ignore_cached: bool,
     ) -> Result<Self> {
         let mut hosts = Vec::with_capacity(SUPPORTED_HOSTS.len());
 
@@ -173,6 +175,7 @@ impl Provider {
             cache_dir: Arc::from(cache_dir.as_ref()),
             cache_ttl,
             now,
+            ignore_cached,
         })
     }
 
@@ -357,13 +360,15 @@ impl Provider {
         let repo = repo_spec.repo();
 
         let cache_path = self.get_cache_path(host.host_domain, owner, repo);
-        if let Some(data) = cache_doc::load_with_ttl(
-            &cache_path,
-            self.cache_ttl,
-            |data: &HostingData| data.timestamp,
-            self.now,
-            format!("hosting data for repository '{repo_spec}'"),
-        ) {
+        if !self.ignore_cached
+            && let Some(data) = cache_doc::load_with_ttl(
+                &cache_path,
+                self.cache_ttl,
+                |data: &HostingData| data.timestamp,
+                self.now,
+                format!("hosting data for repository '{repo_spec}'"),
+            )
+        {
             return RepoData::from_cache(repo_spec, data);
         }
 
@@ -848,7 +853,7 @@ mod tests {
     #[test]
     fn test_get_cache_path() {
         let now = Utc::now();
-        let provider = Provider::new(None, None, "test_cache", Duration::from_secs(3600), now).unwrap();
+        let provider = Provider::new(None, None, "test_cache", Duration::from_secs(3600), now, false).unwrap();
 
         let path = provider.get_cache_path("github.com", "tokio-rs", "tokio");
 
@@ -860,7 +865,7 @@ mod tests {
     #[test]
     fn test_get_cache_path_sanitized() {
         let now = Utc::now();
-        let provider = Provider::new(None, None, "test_cache", Duration::from_secs(3600), now).unwrap();
+        let provider = Provider::new(None, None, "test_cache", Duration::from_secs(3600), now, false).unwrap();
 
         let path = provider.get_cache_path("evil.com", "../../../etc", "passwd");
 
@@ -961,7 +966,7 @@ mod tests {
     #[test]
     fn test_provider_new() {
         let now = Utc::now();
-        let provider = Provider::new(None, None, "test_cache", Duration::from_secs(3600), now).unwrap();
+        let provider = Provider::new(None, None, "test_cache", Duration::from_secs(3600), now, false).unwrap();
         assert_eq!(provider.hosts.len(), 2); // GitHub and Codeberg
     }
 
@@ -974,6 +979,7 @@ mod tests {
             "test_cache",
             Duration::from_secs(3600),
             now,
+            false,
         )
         .unwrap();
         assert_eq!(provider.hosts.len(), 2);

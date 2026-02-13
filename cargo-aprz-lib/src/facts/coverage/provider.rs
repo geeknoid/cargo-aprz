@@ -27,11 +27,12 @@ pub struct Provider {
     cache_ttl: Duration,
     now: DateTime<Utc>,
     base_url: String,
+    ignore_cached: bool,
 }
 
 impl Provider {
     #[must_use]
-    pub fn new(cache_dir: impl AsRef<Path>, cache_ttl: Duration, now: DateTime<Utc>, base_url: Option<&str>) -> Self {
+    pub fn new(cache_dir: impl AsRef<Path>, cache_ttl: Duration, now: DateTime<Utc>, ignore_cached: bool, base_url: Option<&str>) -> Self {
         let client = reqwest::Client::builder()
             .user_agent("cargo-aprz")
             .build()
@@ -43,6 +44,7 @@ impl Provider {
             cache_ttl,
             now,
             base_url: base_url.unwrap_or(DEFAULT_CODECOV_BASE_URL).to_string(),
+            ignore_cached,
         }
     }
 
@@ -86,13 +88,15 @@ impl Provider {
     async fn fetch_coverage_data_for_repo_core(&self, repo_spec: &RepoSpec) -> ProviderResult<CoverageData> {
         let cache_path = self.get_cache_path(repo_spec);
 
-        if let Some(data) = cache_doc::load_with_ttl(
-            &cache_path,
-            self.cache_ttl,
-            |data: &CoverageData| data.timestamp,
-            self.now,
-            format!("coverage for repository '{repo_spec}'"),
-        ) {
+        if !self.ignore_cached
+            && let Some(data) = cache_doc::load_with_ttl(
+                &cache_path,
+                self.cache_ttl,
+                |data: &CoverageData| data.timestamp,
+                self.now,
+                format!("coverage for repository '{repo_spec}'"),
+            )
+        {
             return ProviderResult::Found(data);
         }
 
