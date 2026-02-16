@@ -118,59 +118,24 @@ impl Provider {
         .await
         .expect("task must not panic");
 
-        // now get the per-repo data
-        let repo_futures = join_all(needs_repo_fetch.keys().map(|repo_spec| {
+        // Process each repo end-to-end: fetch repo data, then immediately analyze and cache its crates.
+        // This ensures cache files are written as each repo completes, surviving process interruption.
+        let repo_results = join_all(needs_repo_fetch.into_iter().map(|(repo_spec, crates)| {
             let provider = self.clone();
-            let repo_spec = repo_spec.clone();
             let tracker = tracker.clone();
 
-            tokio::spawn(provider.fetch_repo_data(repo_spec, tracker))
+            tokio::spawn(async move {
+                provider.fetch_and_analyze_repo(repo_spec, crates, tracker).await
+            })
         }))
         .await
         .into_iter()
-        .map(|result| result.expect("task must not panic"));
-
-        let crate_futures = repo_futures.flat_map(|(repo_spec, fetch_result)| {
-            let crates = needs_repo_fetch.get(&repo_spec).cloned().unwrap_or_default();
-
-            match fetch_result {
-                Ok(repo_data) => {
-                    let repo_data = Arc::new(repo_data);
-                    crates
-                        .into_iter()
-                        .map(move |crate_spec| {
-                            let provider = self.clone();
-                            let repo_spec = repo_spec.clone();
-                            let repo_data = Arc::clone(&repo_data);
-
-                            tokio::spawn(provider.analyze_crate(crate_spec, repo_spec, repo_data))
-                        })
-                        .collect::<Vec<_>>()
-                }
-                Err(e) => {
-                    log::error!(target: LOG_TARGET, "Could not fetch repository data for '{repo_spec}': {e:#}");
-
-                    let error = Arc::new(e);
-                    crates
-                        .into_iter()
-                        .map(move |crate_spec| {
-                            let error = Arc::clone(&error);
-                            tokio::spawn(async move { (crate_spec, ProviderResult::Error(error)) })
-                        })
-                        .collect::<Vec<_>>()
-                }
-            }
-        });
+        .flat_map(|result| result.expect("task must not panic"));
 
         // Combine cached and newly analyzed results
         cached_results
             .into_iter()
-            .chain(
-                join_all(crate_futures)
-                    .await
-                    .into_iter()
-                    .map(|result| result.expect("task must not panic")),
-            )
+            .chain(repo_results)
             .inspect(|(crate_spec, result)| {
                 if let ProviderResult::Error(e) = result {
                     log::error!(target: LOG_TARGET, "Could not analyze codebase for {crate_spec}: {e:#}");
@@ -180,12 +145,40 @@ impl Provider {
             })
     }
 
-    /// Fetch repository-level data
-    async fn fetch_repo_data(self, repo_spec: RepoSpec, tracker: RequestTracker) -> (RepoSpec, Result<RepoData>) {
-        let result = self.fetch_repo_data_core(&repo_spec).await;
+    /// Fetch repository data and immediately analyze all its crates, writing cache files per-crate.
+    async fn fetch_and_analyze_repo(
+        self,
+        repo_spec: RepoSpec,
+        crates: Vec<CrateSpec>,
+        tracker: RequestTracker,
+    ) -> Vec<(CrateSpec, ProviderResult<CodebaseData>)> {
+        let fetch_result = self.fetch_repo_data_core(&repo_spec).await;
         tracker.complete_request(TrackedTopic::Codebase);
 
-        (repo_spec, result)
+        match fetch_result {
+            Ok(repo_data) => {
+                let repo_data = Arc::new(repo_data);
+                join_all(crates.into_iter().map(|crate_spec| {
+                    let provider = self.clone();
+                    let repo_spec = repo_spec.clone();
+                    let repo_data = Arc::clone(&repo_data);
+
+                    tokio::spawn(provider.analyze_crate(crate_spec, repo_spec, repo_data))
+                }))
+                .await
+                .into_iter()
+                .map(|result| result.expect("task must not panic"))
+                .collect()
+            }
+            Err(e) => {
+                log::error!(target: LOG_TARGET, "Could not fetch repository data for '{repo_spec}': {e:#}");
+                let error = Arc::new(e);
+                crates
+                    .into_iter()
+                    .map(|crate_spec| (crate_spec, ProviderResult::Error(Arc::clone(&error))))
+                    .collect()
+            }
+        }
     }
 
     async fn fetch_repo_data_core(&self, repo_spec: &RepoSpec) -> Result<RepoData> {
