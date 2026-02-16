@@ -7,7 +7,7 @@ updates:
     # only security updates will be opened automatically
     open-pull-requests-limit: 0
 
-  - package-ecosystem: "hosting-actions"
+  - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "monthly"

@@ -79,7 +79,7 @@ jobs:
           enable-sccache: true
           rust-toolchain: RUST_LATEST
           rust-components: clippy, rustfmt
-          cargo-tools: CARGO_WORKSPACES_VERSION, CARGO_ENSURE_NO_CYCLIC_DEPS_VERSION, CARGO_DENY_VERSION, CARGO_SORT_VERSION
+          cargo-tools: CARGO_WORKSPACES_VERSION, CARGO_ENSURE_NO_CYCLIC_DEPS_VERSION, CARGO_ENSURE_NO_DEFAULT_FEATURES_VERSION, CARGO_DENY_VERSION, CARGO_SORT_VERSION
 
       # execute
       - name: Clippy
@@ -93,6 +93,9 @@ jobs:
       - name: Cyclic Dependencies
         if: success() || failure()
         run: cargo ensure-no-cyclic-deps
+      - name: Default Features
+        if: success() || failure()
+        run: cargo ensure-no-default-features
       - name: Dependency Validation
         if: success() || failure()
         run: cargo deny --all-features --workspace --color always check all

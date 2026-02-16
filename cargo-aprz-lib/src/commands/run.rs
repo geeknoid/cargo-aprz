@@ -13,8 +13,7 @@ const CLAP_STYLES: Styles = Styles::styled()
     .placeholder(AnsiColor::Cyan.on_default());
 
 #[derive(Parser, Debug)]
-#[command(name = "cargo-aprz", bin_name = "cargo", version)]
-#[command(about = "Appraise the quality of Rust dependencies")]
+#[command(bin_name = "cargo", version, about, author)]
 #[command(styles = CLAP_STYLES)]
 struct Cli {
     #[command(subcommand)]
