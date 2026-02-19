@@ -16,5 +16,8 @@ cargo-aprz-lib.workspace = true
 ohno.workspace = true
 tokio.workspace = true
 
+[dev-dependencies]
+mutants = "0.0.3"
+
 [lints]
 workspace = true

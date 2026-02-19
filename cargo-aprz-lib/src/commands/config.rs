@@ -86,7 +86,7 @@ impl Config {
     /// Returns an error if the file cannot be read or parsed
     pub fn load(workspace_root: &Utf8Path, config_path: Option<&Utf8PathBuf>) -> Result<Self> {
         let (final_path, text) = if let Some(path) = config_path {
-            let text = fs::read_to_string(path).into_app_err_with(|| format!("reading cargo-aprz configuration from {path}"))?;
+            let text = fs::read_to_string(path).into_app_err_with(|| format!("reading cargo-aprz configuration file '{path}'"))?;
             (path.clone(), text)
         } else {
             // Look for aprz.toml
@@ -97,11 +97,11 @@ impl Config {
                     // No config file found, use defaults
                     return Ok(Self::default());
                 }
-                Err(e) => return Err(e).into_app_err_with(|| format!("reading cargo-aprz configuration from {path}")),
+                Err(e) => return Err(e).into_app_err_with(|| format!("reading cargo-aprz configuration file '{path}'")),
             }
         };
 
-        let config: Self = toml::from_str(&text).into_app_err_with(|| format!("parsing configuration from {final_path}"))?;
+        let config: Self = toml::from_str(&text).into_app_err_with(|| format!("parsing configuration file '{final_path}'"))?;
         config.validate()?;
 
         Ok(config)

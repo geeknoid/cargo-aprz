@@ -135,7 +135,7 @@ impl Provider {
         let start_time = std::time::Instant::now();
         let requested_names: HashSet<&str> = requested.iter().map(CrateRef::name).collect();
 
-        log::info!(target: LOG_TARGET, "Querying the crates database");
+        log::info!(target: LOG_TARGET, "Querying the crates database for {} crate(s)", requested.len());
 
         // Get the timestamp from the database sync
         let timestamp = self.table_mgr.created_at();

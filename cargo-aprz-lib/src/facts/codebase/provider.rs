@@ -1,12 +1,13 @@
 use super::{CodebaseData, git, source_file_analyzer};
 use crate::Result;
 use crate::facts::ProviderResult;
-use crate::facts::cache_doc::{CacheEnvelope, EnvelopePayload};
+use crate::facts::cache::{Cache, CacheResult};
 use crate::facts::codebase::github_workflow_analyzer::{GitHubWorkflowInfo, sniff_github_workflows};
 use crate::facts::crate_spec::{self, CrateSpec};
 use crate::facts::path_utils::sanitize_path_component;
 use crate::facts::repo_spec::RepoSpec;
 use crate::facts::request_tracker::{RequestTracker, TrackedTopic};
+use crate::facts::throttler::Throttler;
 use cargo_metadata::{Metadata, MetadataCommand, PackageId, TargetKind};
 use chrono::{DateTime, Utc};
 use core::time::Duration;
@@ -21,12 +22,12 @@ use tokio::task::{JoinHandle, spawn_blocking};
 
 pub(super) const LOG_TARGET: &str = "  codebase";
 
+const MAX_CONCURRENT_REQUESTS: usize = 5;
+
 #[derive(Debug, Clone)]
 pub struct Provider {
-    cache_dir: Arc<Path>,
-    cache_ttl: Duration,
-    now: DateTime<Utc>,
-    ignore_cached: bool,
+    cache: Cache,
+    throttler: Arc<Throttler>,
 }
 
 const METADATA_TIMEOUT: Duration = Duration::from_mins(5);
@@ -48,12 +49,10 @@ struct RepoData {
 
 impl Provider {
     #[must_use]
-    pub fn new(cache_dir: impl AsRef<Path>, cache_ttl: Duration, now: DateTime<Utc>, ignore_cached: bool) -> Self {
+    pub fn new(cache: Cache) -> Self {
         Self {
-            cache_dir: Arc::from(cache_dir.as_ref()),
-            cache_ttl,
-            now,
-            ignore_cached,
+            cache,
+            throttler: Throttler::new(MAX_CONCURRENT_REQUESTS),
         }
     }
 
@@ -66,64 +65,45 @@ impl Provider {
 
         tracker.add_requests(TrackedTopic::Codebase, repo_crates.len() as u64);
 
-        // Check cache for all crates from each repo (blocking I/O)
+        // Check cache for all crates from each repo
         // If any crate from a repo is expired/missing, we reanalyze all crates from that repo for consistency
-        let provider = self.clone();
-        let tracker_for_blocking = tracker.clone();
+        let mut cached_results = Vec::new();
+        let mut needs_repo_fetch: HashMap<RepoSpec, Vec<CrateSpec>> = HashMap::default();
 
-        let (cached_results, needs_repo_fetch) = spawn_blocking(move || {
-            let mut cached_results = Vec::new();
-            let mut needs_repo_fetch: HashMap<RepoSpec, Vec<CrateSpec>> = HashMap::default();
+        for (repo_spec, crates) in repo_crates {
+            let mut all_cached_data = Vec::new();
+            let mut needs_fresh_repo = false;
 
-            for (repo_spec, crates) in repo_crates {
-                let mut all_cached_data = Vec::new();
-                let mut any_missing = false;
+            // Check if all crates from this repo have valid cached state
+            for crate_spec in &crates {
+                let crate_name = crate_spec.name();
+                let filename = Self::get_data_filename(crate_name, &repo_spec);
 
-                // Check if all crates from this repo have valid cache
-                for crate_spec in &crates {
-                    let crate_name = crate_spec.name();
-                    let data_path = provider.get_data_path(crate_name, &repo_spec);
-
-                    if provider.ignore_cached {
-                        any_missing = true;
-                        break;
-                    } else if let Some(envelope) = CacheEnvelope::<CodebaseData>::load(
-                        &data_path,
-                        provider.cache_ttl,
-                        provider.now,
-                        format!("codebase data for {crate_spec}"),
-                    ) {
-                        match envelope.payload {
-                            EnvelopePayload::Data(cached_data) => {
-                                all_cached_data.push((crate_spec.clone(), ProviderResult::Found(cached_data)));
-                            }
-                            EnvelopePayload::NoData(reason) => {
-                                all_cached_data.push((crate_spec.clone(), ProviderResult::Unavailable(reason.into())));
-                            }
-                        }
-                    } else {
-                        any_missing = true;
+                match self.cache.load::<CodebaseData>(&filename) {
+                    CacheResult::Data(cached_data) => {
+                        all_cached_data.push((crate_spec.clone(), ProviderResult::Found(cached_data)));
+                    }
+                    CacheResult::NoData(reason) => {
+                        all_cached_data.push((crate_spec.clone(), ProviderResult::Unavailable(reason.into())));
+                    }
+                    CacheResult::Miss => {
+                        needs_fresh_repo = true;
                         break; // No need to check more - we'll reanalyze all
                     }
                 }
-
-                if any_missing {
-                    // At least one crate is expired/missing, reanalyze all crates from this repo
-                    let _ = needs_repo_fetch.insert(repo_spec, crates);
-                } else {
-                    // All crates have valid cache, use the cached data
-                    cached_results.extend(all_cached_data);
-                    tracker_for_blocking.complete_request(TrackedTopic::Codebase);
-                }
             }
 
-            (cached_results, needs_repo_fetch)
-        })
-        .await
-        .expect("task must not panic");
+            if needs_fresh_repo {
+                // At least one crate is expired/missing, reanalyze all crates from this repo
+                let _ = needs_repo_fetch.insert(repo_spec, crates);
+            } else {
+                // All crates have valid cached state, we're done for this repo
+                cached_results.extend(all_cached_data);
+                tracker.complete_request(TrackedTopic::Codebase);
+            }
+        }
 
-        // Process each repo end-to-end: fetch repo data, then immediately analyze and cache its crates.
-        // This ensures cache files are written as each repo completes, surviving process interruption.
+        // Process each repo end-to-end: fetch repo data, then analyze and cache its crates's codebase data.
         let repo_results = join_all(needs_repo_fetch.into_iter().map(|(repo_spec, crates)| {
             let provider = self.clone();
             let tracker = tracker.clone();
@@ -144,34 +124,53 @@ impl Provider {
                 if let ProviderResult::Error(e) = result {
                     log::error!(target: LOG_TARGET, "Could not analyze codebase for {crate_spec}: {e:#}");
                 } else if let ProviderResult::Unavailable(reason) = result {
-                    log::debug!(target: LOG_TARGET, "Codebase data unavailable for {crate_spec}: {reason}");
+                    log::warn!(target: LOG_TARGET, "Codebase data unavailable for {crate_spec}: {reason}");
                 }
             })
     }
 
-    /// Fetch repository data and immediately analyze all its crates, writing cache files per-crate.
+    /// Fetch repository data and analyze all its crates, writing cache files per-crate.
     async fn fetch_and_analyze_repo(
         self,
         repo_spec: RepoSpec,
         crates: Vec<CrateSpec>,
         tracker: RequestTracker,
     ) -> Vec<(CrateSpec, ProviderResult<CodebaseData>)> {
+        let _permit = self.throttler.acquire().await;
         // Sync the git repo first — failures here are transient (network) and should not be cached
         let repo_path = self.get_repo_cache_path(&repo_spec);
-        if let Err(e) = Self::sync_repo(&repo_path, &repo_spec).await {
-            tracker.complete_request(TrackedTopic::Codebase);
-            log::error!(target: LOG_TARGET, "Could not sync repository '{repo_spec}': {e:#}");
-            let error = Arc::new(e);
-            return crates
-                .into_iter()
-                .map(|crate_spec| (crate_spec, ProviderResult::Error(Arc::clone(&error))))
-                .collect();
+        match Self::sync_repo(&repo_path, &repo_spec).await {
+            Err(e) => {
+                tracker.complete_request(TrackedTopic::Codebase);
+                let error = Arc::new(e);
+                return crates
+                    .into_iter()
+                    .map(|crate_spec| (crate_spec, ProviderResult::Error(Arc::clone(&error))))
+                    .collect();
+            }
+            Ok(git::RepoStatus::NotFound) => {
+                let reason = format!("repository '{repo_spec}' not found");
+                log::debug!(target: LOG_TARGET, "{reason}");
+                let results: Vec<_> = crates
+                    .into_iter()
+                    .map(|crate_spec| {
+                        let filename = Self::get_data_filename(crate_spec.name(), &repo_spec);
+                        if let Err(e) = self.cache.save_no_data(&filename, &reason) {
+                            log::debug!(target: LOG_TARGET, "Could not save cache for {crate_spec}: {e:#}");
+                            return (crate_spec, ProviderResult::Error(Arc::new(e)));
+                        }
+                        (crate_spec, ProviderResult::Unavailable(reason.clone().into()))
+                    })
+                    .collect();
+                tracker.complete_request(TrackedTopic::Codebase);
+                return results;
+            }
+            Ok(git::RepoStatus::Ok) => {}
         }
 
         let fetch_result = self.fetch_repo_data_core(&repo_spec, &repo_path).await;
-        tracker.complete_request(TrackedTopic::Codebase);
 
-        match fetch_result {
+        let results = match fetch_result {
             Ok(repo_data) => {
                 let repo_data = Arc::new(repo_data);
                 join_all(crates.into_iter().map(|crate_spec| {
@@ -188,23 +187,31 @@ impl Provider {
             }
             Err(e) => {
                 let reason = format!("{e:#}");
-                log::error!(target: LOG_TARGET, "Could not analyze repository '{repo_spec}': {reason}");
+                log::warn!(target: LOG_TARGET, "Could not analyze repository '{repo_spec}': {reason}");
                 crates
                     .into_iter()
                     .map(|crate_spec| {
-                        let data_path = self.get_data_path(crate_spec.name(), &repo_spec);
-                        if let Err(e) = CacheEnvelope::<CodebaseData>::no_data(self.now, &reason).save(&data_path) {
+                        let filename = Self::get_data_filename(crate_spec.name(), &repo_spec);
+
+                        // only write NoData if there's no existing valid cache entry
+                        if !matches!(self.cache.load::<CodebaseData>(&filename), CacheResult::Data(_))
+                            && let Err(e) = self.cache.save_no_data(&filename, &reason)
+                        {
                             log::debug!(target: LOG_TARGET, "Could not save cache for {crate_spec}: {e:#}");
                         }
+
                         (crate_spec, ProviderResult::Unavailable(reason.clone().into()))
                     })
                     .collect()
             }
-        }
+        };
+
+        tracker.complete_request(TrackedTopic::Codebase);
+        results
     }
 
     /// Sync (clone or pull) the git repository. Failures here are transient.
-    async fn sync_repo(repo_path: &Path, repo_spec: &RepoSpec) -> Result<()> {
+    async fn sync_repo(repo_path: &Path, repo_spec: &RepoSpec) -> Result<git::RepoStatus> {
         let git_result = tokio::time::timeout(GIT_REPO_TIMEOUT, git::get_repo(repo_path, repo_spec.url())).await;
 
         match git_result {
@@ -213,7 +220,7 @@ impl Provider {
                 GIT_REPO_TIMEOUT.as_secs(),
             )),
             Ok(Err(e)) => Err(e.enrich_with(|| format!("syncing repository '{repo_spec}'"))),
-            Ok(Ok(())) => Ok(()),
+            Ok(Ok(status)) => Ok(status),
         }
     }
 
@@ -248,9 +255,14 @@ impl Provider {
             },
         };
 
-        log::debug!(target: LOG_TARGET, "Counting contributors in repository '{repo_spec}'");
+        log::debug!(target: LOG_TARGET, "Gathering commit statistics for repository '{repo_spec}'");
 
-        let contributor_count = match git::count_contributors(repo_path).await {
+        let (contributor_count, commit_stats) = tokio::join!(
+            git::count_contributors(repo_path),
+            git::get_commit_stats(repo_path, &[90, 180, 365]),
+        );
+
+        let contributor_count = match contributor_count {
             Ok(count) => count,
             Err(e) => {
                 log::warn!(target: LOG_TARGET, "Could not count contributors for '{repo_spec}': {e:#}");
@@ -258,32 +270,16 @@ impl Provider {
             }
         };
 
-        log::debug!(target: LOG_TARGET, "Counting recent commits in repository '{repo_spec}'");
-
-        let (commits_last_90_days, commits_last_180_days, commits_last_365_days) =
-            Self::count_recent_commits(repo_path, repo_spec).await;
-
-        let commit_count = match git::count_all_commits(repo_path).await {
-            Ok(count) => count,
+        let commit_stats = match commit_stats {
+            Ok(stats) => stats,
             Err(e) => {
-                log::warn!(target: LOG_TARGET, "Could not count total commits for '{repo_spec}': {e:#}");
-                0
-            }
-        };
-
-        let first_commit_at = match git::get_first_commit_time(repo_path).await {
-            Ok(dt) => dt,
-            Err(e) => {
-                log::warn!(target: LOG_TARGET, "Could not get first commit time for '{repo_spec}': {e:#}");
-                DateTime::UNIX_EPOCH
-            }
-        };
-
-        let last_commit_at = match git::get_last_commit_time(repo_path).await {
-            Ok(dt) => dt,
-            Err(e) => {
-                log::warn!(target: LOG_TARGET, "Could not get last commit time for '{repo_spec}': {e:#}");
-                DateTime::UNIX_EPOCH
+                log::warn!(target: LOG_TARGET, "Could not get commit statistics for '{repo_spec}': {e:#}");
+                git::CommitStats {
+                    commit_count: 0,
+                    first_commit_at: DateTime::UNIX_EPOCH,
+                    last_commit_at: DateTime::UNIX_EPOCH,
+                    commits_per_window: vec![0, 0, 0],
+                }
             }
         };
 
@@ -306,41 +302,13 @@ impl Provider {
             metadata: Arc::new(metadata),
             workflows,
             contributor_count,
-            commits_last_90_days,
-            commits_last_180_days,
-            commits_last_365_days,
-            commit_count,
-            first_commit_at,
-            last_commit_at,
+            commits_last_90_days: commit_stats.commits_per_window[0],
+            commits_last_180_days: commit_stats.commits_per_window[1],
+            commits_last_365_days: commit_stats.commits_per_window[2],
+            commit_count: commit_stats.commit_count,
+            first_commit_at: commit_stats.first_commit_at,
+            last_commit_at: commit_stats.last_commit_at,
         })
-    }
-
-    async fn count_recent_commits(repo_path: &Path, repo_spec: &RepoSpec) -> (u64, u64, u64) {
-        let commits_last_90_days = match git::count_recent_commits(repo_path, 90).await {
-            Ok(count) => count,
-            Err(e) => {
-                log::warn!(target: LOG_TARGET, "Could not count recent commits for '{repo_spec}': {e:#}");
-                0
-            }
-        };
-
-        let commits_last_180_days = match git::count_recent_commits(repo_path, 180).await {
-            Ok(count) => count,
-            Err(e) => {
-                log::warn!(target: LOG_TARGET, "Could not count commits in last 180 days for '{repo_spec}': {e:#}");
-                0
-            }
-        };
-
-        let commits_last_365_days = match git::count_recent_commits(repo_path, 365).await {
-            Ok(count) => count,
-            Err(e) => {
-                log::warn!(target: LOG_TARGET, "Could not count commits in last year for '{repo_spec}': {e:#}");
-                0
-            }
-        };
-
-        (commits_last_90_days, commits_last_180_days, commits_last_365_days)
     }
 
     /// Analyze a single crate
@@ -351,7 +319,7 @@ impl Provider {
         repo_data: Arc<RepoData>,
     ) -> (CrateSpec, ProviderResult<CodebaseData>) {
         let crate_name = crate_spec.name().to_string();
-        let data_path = self.get_data_path(&crate_name, &repo_spec);
+        let filename = Self::get_data_filename(&crate_name, &repo_spec);
 
         log::info!(target: LOG_TARGET, "Analyzing source code for {crate_spec} from repository '{repo_spec}'");
 
@@ -359,7 +327,7 @@ impl Provider {
         let Some(package) = repo_data.metadata.packages.iter().find(|p| p.name == crate_name) else {
             let reason = format!("crate '{crate_name}' not found in repository '{repo_spec}'");
             log::debug!(target: LOG_TARGET, "{reason}");
-            if let Err(e) = CacheEnvelope::<CodebaseData>::no_data(self.now, &reason).save(&data_path) {
+            if let Err(e) = self.cache.save_no_data(&filename, &reason) {
                 log::debug!(target: LOG_TARGET, "Could not save cache for {crate_spec}: {e:#}");
             }
             return (crate_spec, ProviderResult::Unavailable(reason.into()));
@@ -367,7 +335,7 @@ impl Provider {
 
         let Some(crate_path) = package.manifest_path.parent() else {
             let reason = format!("package manifest has no parent directory for {crate_spec}");
-            if let Err(e) = CacheEnvelope::<CodebaseData>::no_data(self.now, &reason).save(&data_path) {
+            if let Err(e) = self.cache.save_no_data(&filename, &reason) {
                 log::debug!(target: LOG_TARGET, "Could not save cache for {crate_spec}: {e:#}");
             }
             return (crate_spec, ProviderResult::Unavailable(reason.into()));
@@ -402,21 +370,18 @@ impl Provider {
 
         if let Err(e) = Self::analyze_source_files(crate_path.as_std_path(), &mut codebase_data).await {
             let reason = format!("{:#}", e.enrich_with(|| format!("analyzing source files for {crate_spec}")));
-            if let Err(e) = CacheEnvelope::<CodebaseData>::no_data(self.now, &reason).save(&data_path) {
+            if let Err(e) = self.cache.save_no_data(&filename, &reason) {
                 log::debug!(target: LOG_TARGET, "Could not save cache for {crate_spec}: {e:#}");
             }
             return (crate_spec, ProviderResult::Unavailable(reason.into()));
         }
 
-        let now = self.now;
-        let result = spawn_blocking({
-            move || match CacheEnvelope::data(now, codebase_data.clone()).save(&data_path) {
-                Ok(()) => ProviderResult::Found(codebase_data),
-                Err(e) => ProviderResult::Error(Arc::new(e)),
-            }
-        })
-        .await
-        .expect("task must not panic");
+        let result = match self.cache.save(&filename, &codebase_data) {
+            Ok(()) => ProviderResult::Found(codebase_data),
+            Err(e) => ProviderResult::Error(Arc::new(e)),
+        };
+
+        log::debug!(target: LOG_TARGET, "Completed analysis of {crate_spec}");
 
         (crate_spec, result)
     }
@@ -437,9 +402,8 @@ impl Provider {
         }
 
         // Collect file paths first (blocking directory walk)
-        let src_dir_for_walk = src_dir.clone();
         let file_paths: Vec<_> = spawn_blocking(move || {
-            walkdir::WalkDir::new(&src_dir_for_walk)
+            walkdir::WalkDir::new(&src_dir)
                 .follow_links(false) // Don't follow symlinks to prevent loops
                 .max_depth(MAX_DEPTH)
                 .into_iter()
@@ -483,7 +447,7 @@ impl Provider {
             log::debug!(
                 target: LOG_TARGET,
                 "File count limit ({MAX_FILES}) reached in {}, some files may not be analyzed",
-                src_dir.display()
+                crate_path.join("src").display()
             );
         }
 
@@ -529,29 +493,29 @@ impl Provider {
         Ok(())
     }
 
-    /// Get the cache path for a specific repository
-    fn get_repo_cache_path(&self, repo_spec: &RepoSpec) -> PathBuf {
-        let safe_host = sanitize_path_component(repo_spec.host());
-        let safe_owner = sanitize_path_component(repo_spec.owner());
-        let safe_repo = sanitize_path_component(repo_spec.repo());
-        self.cache_dir.join("repos").join(safe_host).join(safe_owner).join(safe_repo)
+    /// Get the sanitized host/owner/repo path components for a repository.
+    fn safe_repo_components(repo_spec: &RepoSpec) -> (String, String, String) {
+        (
+            sanitize_path_component(repo_spec.host()),
+            sanitize_path_component(repo_spec.owner()),
+            sanitize_path_component(repo_spec.repo()),
+        )
     }
 
-    /// Get the codebase data file path for a specific crate in a repository
+    /// Get the cache path for a specific repository
+    fn get_repo_cache_path(&self, repo_spec: &RepoSpec) -> PathBuf {
+        let (safe_host, safe_owner, safe_repo) = Self::safe_repo_components(repo_spec);
+        self.cache.dir().join("repos").join(safe_host).join(safe_owner).join(safe_repo)
+    }
+
+    /// Get the codebase data filename for a specific crate in a repository
     ///
-    /// Returns `cache_dir/analysis/host/owner/repo/crate_name.json`
-    fn get_data_path(&self, crate_name: &str, repo_spec: &RepoSpec) -> PathBuf {
-        let safe_host = sanitize_path_component(repo_spec.host());
-        let safe_owner = sanitize_path_component(repo_spec.owner());
-        let safe_repo = sanitize_path_component(repo_spec.repo());
+    /// Returns a relative path suitable for `Cache::load`/`Cache::save`.
+    fn get_data_filename(crate_name: &str, repo_spec: &RepoSpec) -> String {
+        let (safe_host, safe_owner, safe_repo) = Self::safe_repo_components(repo_spec);
         let safe_crate = sanitize_path_component(crate_name);
 
-        self.cache_dir
-            .join("analysis")
-            .join(safe_host)
-            .join(safe_owner)
-            .join(safe_repo)
-            .join(format!("{safe_crate}.json"))
+        format!("analysis/{safe_host}/{safe_owner}/{safe_repo}/{safe_crate}.json")
     }
 
     /// Count transitive dependencies by walking the dependency graph
@@ -573,7 +537,7 @@ impl Provider {
         };
 
         // Breadth-first traversal of the dependency graph using references
-        let mut visited: HashSet<PackageId> = HashSet::default();
+        let mut visited: HashSet<&PackageId> = HashSet::default();
         let mut to_visit: VecDeque<&PackageId> = VecDeque::new();
 
         // Start with direct dependencies (push references)
@@ -583,13 +547,11 @@ impl Provider {
 
         // Visit all transitive dependencies
         while let Some(dep_id) = to_visit.pop_front() {
-            if !visited.contains(dep_id) {
-                let _ = visited.insert(dep_id.clone());
-
-                if let Some(dep_node) = node_map.get(dep_id) {
-                    for transitive_dep_id in &dep_node.dependencies {
-                        to_visit.push_back(transitive_dep_id);
-                    }
+            if visited.insert(dep_id)
+                && let Some(dep_node) = node_map.get(dep_id)
+            {
+                for transitive_dep_id in &dep_node.dependencies {
+                    to_visit.push_back(transitive_dep_id);
                 }
             }
         }

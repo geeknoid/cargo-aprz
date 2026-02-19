@@ -1,3 +1,4 @@
+use super::cache::Cache;
 use super::cache_lock::{CacheLockGuard, acquire_cache_lock};
 use super::crate_facts::CrateFacts;
 use super::crate_spec::CrateSpec;
@@ -8,7 +9,7 @@ use crate::Result;
 use chrono::{DateTime, Utc};
 use core::time::Duration;
 use ohno::IntoAppError;
-use crate::HashMap;
+use crate::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -67,14 +68,22 @@ impl Collector {
         // Acquire cache lock to prevent concurrent access
         let cache_lock = acquire_cache_lock(cache_dir.as_ref()).await?;
 
+        let hosting_cache = Cache::new(hosting_cache_dir, hosting_cache_ttl, now, ignore_cached);
+        let codebase_cache = Cache::new(codebase_cache_dir, codebase_cache_ttl, now, ignore_cached);
+        let coverage_cache = Cache::new(coverage_cache_dir, coverage_cache_ttl, now, ignore_cached);
+        let advisories_cache = Cache::new(advisories_cache_dir, advisories_cache_ttl, now, ignore_cached);
+        let docs_cache = Cache::new(docs_cache_dir, Duration::MAX, now, ignore_cached);
+
         Ok(Self {
             crates_provider: super::crates::Provider::new(&crates_cache_dir, crates_cache_ttl, Arc::clone(&progress), now, ignore_cached, None).await?,
-            hosting_provider: super::hosting::Provider::new(github_token, codeberg_token, &hosting_cache_dir, hosting_cache_ttl, now, ignore_cached)?,
-            codebase_provider: super::codebase::Provider::new(&codebase_cache_dir, codebase_cache_ttl, now, ignore_cached),
-            coverage_provider: super::coverage::Provider::new(&coverage_cache_dir, coverage_cache_ttl, now, ignore_cached, None),
-            advisories_provider: super::advisories::Provider::new(&advisories_cache_dir, advisories_cache_ttl, Arc::clone(&progress), now, ignore_cached)
+
+            advisories_provider: super::advisories::Provider::new(&advisories_cache, Arc::clone(&progress))
                 .await?,
-            docs_provider: super::docs::Provider::new(&docs_cache_dir, now, ignore_cached, None),
+
+            hosting_provider: super::hosting::Provider::new(github_token, codeberg_token, hosting_cache)?,
+            codebase_provider: super::codebase::Provider::new(codebase_cache),
+            coverage_provider: super::coverage::Provider::new(coverage_cache, None),
+            docs_provider: super::docs::Provider::new(docs_cache, None),
             progress,
             _cache_lock: cache_lock,
         })
@@ -91,11 +100,14 @@ impl Collector {
             return Ok(Vec::new().into_iter());
         }
 
+        // Deduplicate crate refs before processing
+        let crate_refs: Vec<_> = crate_refs.iter().cloned().collect::<HashSet<_>>().into_iter().collect();
+
         // Step 1: Start identification phase - query crates provider
         self.progress.set_phase("Identifying");
         let crate_data = self
             .crates_provider
-            .get_crates_data(crate_refs, self.progress.as_ref(), suggestions)
+            .get_crates_data(&crate_refs, self.progress.as_ref(), suggestions)
             .await;
 
         // Deduplicate CrateSpecs to prevent concurrent processing of the same crate
@@ -117,7 +129,7 @@ impl Collector {
     }
 
     async fn query_providers(&self, crates_data: Vec<(CrateSpec, ProviderResult<CratesData>)>) -> Vec<CrateFacts> {
-        let request_tracker = RequestTracker::new(self.progress.as_ref());
+        let request_tracker = RequestTracker::new(&self.progress);
 
         let mut facts_map: HashMap<CrateSpec, CrateFacts> = crates_data
             .into_iter()

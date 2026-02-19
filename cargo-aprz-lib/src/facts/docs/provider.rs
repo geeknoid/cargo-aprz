@@ -1,12 +1,11 @@
 use super::DocsData;
 use crate::Result;
-use crate::facts::cache_doc::{CacheEnvelope, EnvelopePayload};
+use crate::facts::cache::{Cache, CacheResult};
 use crate::facts::crate_spec::CrateSpec;
 use crate::facts::path_utils::sanitize_path_component;
 use crate::facts::request_tracker::{RequestTracker, TrackedTopic};
+use crate::facts::throttler::Throttler;
 use crate::facts::ProviderResult;
-use chrono::{DateTime, Utc};
-use core::time::Duration;
 use futures::stream::TryStreamExt;
 use futures_util::future::join_all;
 use ohno::{EnrichableExt, IntoAppError, app_err};
@@ -18,27 +17,22 @@ use tokio::io::AsyncWriteExt;
 pub(super) const LOG_TARGET: &str = "      docs";
 
 /// Default base URL for docs.rs
-pub const DEFAULT_DOCS_BASE_URL: &str = "https://docs.rs";
+pub const DOCS_BASE_URL: &str = "https://docs.rs";
 
-/// Error type for documentation download operations
-enum DownloadError {
-    NotFound,
-    Other(ohno::AppError),
-}
+const MAX_CONCURRENT_REQUESTS: usize = 5;
 
 #[derive(Debug, Clone)]
 pub struct Provider {
     client: Arc<reqwest::Client>,
-    cache_dir: Arc<Path>,
+    cache: Cache,
     base_url: String,
-    now: DateTime<Utc>,
-    ignore_cached: bool,
+    throttler: Arc<Throttler>,
 }
 
 impl Provider {
     /// Create a new docs provider
     #[must_use]
-    pub fn new(cache_dir: impl AsRef<Path>, now: DateTime<Utc>, ignore_cached: bool, base_url: Option<&str>) -> Self {
+    pub fn new(cache: Cache, base_url: Option<&str>) -> Self {
         let client = reqwest::Client::builder()
             .user_agent("cargo-aprz")
             .build()
@@ -46,10 +40,9 @@ impl Provider {
 
         Self {
             client: Arc::new(client),
-            cache_dir: Arc::from(cache_dir.as_ref()),
-            base_url: base_url.unwrap_or(DEFAULT_DOCS_BASE_URL).to_string(),
-            now,
-            ignore_cached,
+            cache,
+            base_url: base_url.unwrap_or(DOCS_BASE_URL).to_string(),
+            throttler: Throttler::new(MAX_CONCURRENT_REQUESTS),
         }
     }
 
@@ -60,6 +53,8 @@ impl Provider {
         tracker: &RequestTracker,
     ) -> impl Iterator<Item = (CrateSpec, ProviderResult<DocsData>)> {
         join_all(crates.into_iter().map(|crate_spec| {
+            tracker.add_requests(TrackedTopic::Docs, 1);
+
             let provider = self.clone();
             let tracker = tracker.clone();
 
@@ -72,13 +67,13 @@ impl Provider {
             if let ProviderResult::Error(e) = result {
                 log::error!(target: LOG_TARGET, "Could not fetch documentation data for {crate_spec}: {e:#}");
             } else if let ProviderResult::Unavailable(reason) = result {
-                log::debug!(target: LOG_TARGET, "Documentation unavailable for {crate_spec}: {reason}");
+                log::warn!(target: LOG_TARGET, "Documentation unavailable for {crate_spec}: {reason}");
             }
         })
     }
 
     async fn fetch_docs_for_crate(self, crate_spec: CrateSpec, tracker: RequestTracker) -> (CrateSpec, ProviderResult<DocsData>) {
-        tracker.add_requests(TrackedTopic::Docs, 1);
+        let _permit = self.throttler.acquire().await;
         let result = self.fetch_docs_for_crate_core(&crate_spec).await;
         tracker.complete_request(TrackedTopic::Docs);
 
@@ -86,33 +81,41 @@ impl Provider {
     }
 
     async fn fetch_docs_for_crate_core(&self, crate_spec: &CrateSpec) -> ProviderResult<DocsData> {
-        if !self.ignore_cached
-            && let Some(envelope) = CacheEnvelope::<DocsData>::load(
-                self.get_cache_path(crate_spec),
-                Duration::MAX,
-                self.now,
-                format!("docs for crate {crate_spec}"),
-            )
-        {
-            return match envelope.payload {
-                EnvelopePayload::Data(data) => ProviderResult::Found(data),
-                EnvelopePayload::NoData(reason) => ProviderResult::Unavailable(reason.into()),
-            };
+        let filename = Self::get_cache_filename(crate_spec);
+
+        match self.cache.load::<DocsData>(&filename) {
+            CacheResult::Data(data) => return ProviderResult::Found(data),
+            CacheResult::NoData(reason) => return ProviderResult::Unavailable(reason.into()),
+            CacheResult::Miss => {}
         }
 
-        log::debug!(target: LOG_TARGET, "Cache miss for {crate_spec}, fetching from docs.rs");
+        log::info!(target: LOG_TARGET, "Querying {} for documentation on {crate_spec}", self.base_url);
 
-        let temp_file = match self.download_zst(crate_spec).await {
-            Ok(path) => path,
-            Err(DownloadError::NotFound) => {
-                let reason = format!("documentation not found on docs.rs for {crate_spec}");
-                let cache_path = self.get_cache_path(crate_spec);
-                if let Err(e) = CacheEnvelope::<DocsData>::no_data(self.now, &reason).save(&cache_path) {
+        let provider = self.clone();
+        let spec = crate_spec.clone();
+
+        // resilient_download retries on Err, passes through Ok(None) for 404.
+        let result = crate::facts::resilient_http::resilient_download(
+            "docs_download",
+            spec,
+            None,
+            move |spec| {
+                let provider = provider.clone();
+                async move { provider.download_zst_core(&spec).await }
+            },
+        )
+        .await;
+
+        let temp_file = match result {
+            Ok(Some(path)) => path,
+            Ok(None) => {
+                let reason = format!("could not find documentation for {crate_spec} on {}", self.base_url);
+                if let Err(e) = self.cache.save_no_data(&filename, &reason) {
                     log::debug!(target: LOG_TARGET, "Could not save cache for {crate_spec}: {e:#}");
                 }
                 return ProviderResult::Unavailable(reason.into());
             }
-            Err(DownloadError::Other(e)) => {
+            Err(e) => {
                 return ProviderResult::Error(Arc::new(e.enrich_with(|| format!("downloading docs for {crate_spec}"))));
             }
         };
@@ -131,8 +134,7 @@ impl Provider {
             }
             Err(e) => {
                 let reason = format!("{e:#}");
-                let cache_path = self.get_cache_path(crate_spec);
-                if let Err(e) = CacheEnvelope::<DocsData>::no_data(self.now, &reason).save(&cache_path) {
+                if let Err(e) = self.cache.save_no_data(&filename, &reason) {
                     log::debug!(target: LOG_TARGET, "Could not save cache for {crate_spec}: {e:#}");
                 }
 
@@ -148,53 +150,26 @@ impl Provider {
             .await
             .unwrap_or_else(|e| log::debug!(target: LOG_TARGET, "Could not remove temp file '{}': {e:#}", temp_file.display()));
 
-        let cache_path = self.get_cache_path(crate_spec);
-        match CacheEnvelope::data(self.now, docs_data.clone()).save(&cache_path) {
+        match self.cache.save(&filename, &docs_data) {
             Ok(()) => ProviderResult::Found(docs_data),
             Err(e) => ProviderResult::Error(Arc::new(e)),
         }
     }
 
-    /// Get the cache file path for a specific crate and version
-    fn get_cache_path(&self, crate_spec: &CrateSpec) -> PathBuf {
+    /// Get the cache filename for a specific crate and version
+    fn get_cache_filename(crate_spec: &CrateSpec) -> String {
         let safe_name = sanitize_path_component(crate_spec.name());
         let safe_version = sanitize_path_component(&crate_spec.version().to_string());
-        self.cache_dir.join(format!("{safe_name}@{safe_version}.json"))
+        format!("{safe_name}@{safe_version}.json")
     }
 
-    /// Download .zst file from docs.rs asynchronously with retry and timeout.
-    async fn download_zst(&self, crate_spec: &CrateSpec) -> Result<PathBuf, DownloadError> {
-        let provider = self.clone();
-        let spec = crate_spec.clone();
-
-        // resilient_download retries on Err, passes through Ok(None) for 404.
-        let result = crate::facts::resilient_http::resilient_download(
-            "docs_download",
-            spec,
-            None,
-            move |spec| {
-                let provider = provider.clone();
-                async move { provider.download_zst_core(&spec).await }
-            },
-        )
-        .await;
-
-        match result {
-            Ok(Some(path)) => Ok(path),
-            Ok(None) => Err(DownloadError::NotFound),
-            Err(e) => Err(DownloadError::Other(e)),
-        }
-    }
-
-    /// Inner download logic for a single attempt.
+    /// Download logic for a single attempt.
     /// Returns `Ok(None)` for 404 (not retryable), `Ok(Some(path))` on success.
     async fn download_zst_core(&self, crate_spec: &CrateSpec) -> Result<Option<PathBuf>> {
         let crate_name = crate_spec.name();
         let version = crate_spec.version().to_string();
 
         let url = format!("{}/crate/{crate_name}/{version}/json", self.base_url);
-
-        log::info!(target: LOG_TARGET, "Querying docs.rs for documentation on {crate_spec}");
 
         let response = crate::facts::resilient_http::resilient_get(&self.client, &url)
             .await?;

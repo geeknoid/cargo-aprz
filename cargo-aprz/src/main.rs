@@ -2,8 +2,7 @@
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
 use cargo_aprz_lib::{Host, run};
-use std::io::Write;
-use std::io::{stderr, stdout};
+use std::io::{Write, stderr, stdout};
 
 /// Default host that runs real OS commands.
 #[derive(Debug, Clone, Default)]
@@ -26,6 +25,7 @@ impl Host for RealHost {
 
 #[tokio::main]
 #[cfg_attr(coverage_nightly, coverage(off))]
-async fn main() -> Result<(), ohno::AppError> {
-    run(&mut RealHost, std::env::args()).await
+#[cfg_attr(test, mutants::skip)] // thin wrapper, tested via integration tests on `run()`
+async fn main() {
+    run(&mut RealHost, std::env::args()).await;
 }

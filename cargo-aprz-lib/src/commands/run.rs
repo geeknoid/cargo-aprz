@@ -1,8 +1,9 @@
 //! Command dispatch logic for cargo-aprz
 
 use super::{CratesArgs, DepsArgs, InitArgs, ValidateArgs, init_config, process_crates, process_dependencies, validate_config};
-use crate::{Host, Result};
+use crate::Host;
 use clap::builder::Styles;
+use std::io::Write;
 use clap::builder::styling::{AnsiColor, Effects};
 use clap::{Parser, Subcommand};
 
@@ -57,7 +58,7 @@ enum AprzSubcommand {
 /// # Errors
 ///
 /// Returns an error if command parsing fails or if the executed command fails
-pub async fn run<I, T, H>(host: &mut H, args: I) -> Result<()>
+pub async fn run<I, T, H>(host: &mut H, args: I)
 where
     I: IntoIterator<Item = T>,
     T: Into<std::ffi::OsString> + Clone,
@@ -65,10 +66,15 @@ where
 {
     let CargoSubcommand::Aprz(args) = Cli::parse_from(args).command;
 
-    match &args.command {
+    let result = match &args.command {
         AprzSubcommand::Crates(crates_args) => process_crates(host, crates_args).await,
         AprzSubcommand::Deps(deps_args) => process_dependencies(host, deps_args).await,
         AprzSubcommand::Init(init_args) => init_config(host, init_args),
         AprzSubcommand::Validate(validate_args) => validate_config(host, validate_args),
+    };
+
+    if let Err(e) = result {
+        let _ = writeln!(host.error(), "ERROR: {e}");
+        host.exit(1);
     }
 }
