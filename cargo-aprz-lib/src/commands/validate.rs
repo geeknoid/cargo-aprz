@@ -12,8 +12,8 @@ use std::io::Write;
 
 #[derive(Parser, Debug)]
 pub struct ValidateArgs {
-    /// Path to configuration file (default is `aprz.toml`)
-    #[arg(long, short = 'c', value_name = "PATH")]
+    /// Path to configuration file (defaults to `aprz.toml` in workspace root)
+    #[arg(value_name = "PATH")]
     pub config: Option<Utf8PathBuf>,
 
     /// Path to Cargo.toml file
@@ -21,13 +21,33 @@ pub struct ValidateArgs {
     pub manifest_path: Utf8PathBuf,
 }
 
+pub fn validate_config<H: Host>(host: &mut H, args: &ValidateArgs) -> Result<()> {
+    let config_path = if let Some(path) = &args.config {
+        path.clone()
+    } else {
+        let mut metadata_cmd = MetadataCommand::new();
+        let _ = metadata_cmd.manifest_path(&args.manifest_path);
+        let metadata = metadata_cmd.exec().into_app_err("retrieving workspace metadata")?;
+        metadata.workspace_root.join("aprz.toml")
+    };
+
+    if !config_path.as_std_path().exists() {
+        return Err(app_err!("could not find configuration file '{config_path}'"));
+    }
+
+    validate_config_inner(&config_path)?;
+
+    let _ = writeln!(host.output(), "Configuration file at '{config_path}' is valid");
+    Ok(())
+}
+
 /// Validates a configuration file by loading it and checking expression evaluation
 ///
 /// # Errors
 ///
 /// Returns an error if the config file cannot be loaded, parsed, or if expressions fail to evaluate
-fn validate_config_inner(workspace_root: &Utf8Path, config_path: Option<&Utf8PathBuf>) -> Result<()> {
-    let config = Config::load(workspace_root, config_path)?;
+fn validate_config_inner(config_path: &Utf8Path) -> Result<()> {
+    let config = Config::load(config_path.parent().unwrap_or_else(|| Utf8Path::new(".")), Some(&config_path.to_path_buf()))?;
 
     // Validate that all expressions can be evaluated against default metrics (only if any are defined)
     if !config.high_risk_if_any.is_empty() || !config.eval.is_empty() {
@@ -49,41 +69,6 @@ fn validate_config_inner(workspace_root: &Utf8Path, config_path: Option<&Utf8Pat
     }
 
     Ok(())
-}
-
-pub fn validate_config<H: Host>(host: &mut H, args: &ValidateArgs) -> Result<()> {
-    let config_path = args.config.as_ref();
-
-    // Only resolve workspace root when no explicit config path is provided
-    let workspace_root;
-    let workspace_root_ref = if config_path.is_some() {
-        // When an explicit config is given, workspace root is only used as a
-        // base for relative paths inside Config::load, which won't apply here.
-        Utf8Path::new(".")
-    } else {
-        let mut metadata_cmd = MetadataCommand::new();
-        let _ = metadata_cmd.manifest_path(&args.manifest_path);
-        let metadata = metadata_cmd.exec().into_app_err("retrieving workspace metadata")?;
-        workspace_root = metadata.workspace_root;
-        &workspace_root
-    };
-
-    match validate_config_inner(workspace_root_ref, config_path) {
-        Ok(()) => {
-            let _ = writeln!(host.output(), "Configuration file is valid");
-            if let Some(path) = config_path {
-                let _ = writeln!(host.output(), "Config file: {path}");
-            } else {
-                let _ = writeln!(host.output(), "Using default configuration (no config file found)");
-            }
-            Ok(())
-        }
-        Err(e) => {
-            let _ = writeln!(host.error(), "❌ Configuration validation failed: {e}");
-            host.exit(1);
-            Err(e)
-        }
-    }
 }
 
 #[cfg(test)]

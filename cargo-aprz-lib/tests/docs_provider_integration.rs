@@ -1,7 +1,8 @@
 //! Integration tests for the docs provider using real fixtures and wiremock
 
+use cargo_aprz_lib::facts::cache::Cache;
 use cargo_aprz_lib::facts::docs::{DocsData, DocsMetrics, Provider};
-use cargo_aprz_lib::facts::{CacheEnvelope, CrateSpec, Progress, ProviderResult, RequestTracker};
+use cargo_aprz_lib::facts::{CrateSpec, Progress, ProviderResult, RequestTracker};
 use chrono::Utc;
 use semver::Version;
 use std::fs;
@@ -18,6 +19,7 @@ impl Progress for NoOpProgress {
     fn set_phase(&self, _phase: &str) {}
     fn set_determinate(&self, _callback: Box<dyn Fn() -> (u64, u64, String) + Send + Sync + 'static>) {}
     fn set_indeterminate(&self, _callback: Box<dyn Fn() -> String + Send + Sync + 'static>) {}
+    fn println(&self, _msg: &str) {}
     fn done(&self) {}
 }
 
@@ -58,14 +60,15 @@ async fn test_docs_provider_with_fixture() {
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
 
     // Create provider with mock server URL
-    let provider = Provider::new(temp_dir.path(), Utc::now(), false, Some(&mock_server.uri()));
+    let cache = Cache::new(temp_dir.path(), core::time::Duration::MAX, Utc::now(), false);
+    let provider = Provider::new(cache, Some(&mock_server.uri()));
 
     // Create crate spec for anyhow 1.0.100
     let crate_spec = CrateSpec::from_arcs(Arc::from("anyhow"), Arc::new(Version::parse("1.0.100").unwrap()));
 
     // Fetch docs data
     let progress = Arc::new(NoOpProgress) as Arc<dyn Progress>;
-    let tracker = RequestTracker::new(progress.as_ref());
+    let tracker = RequestTracker::new(&progress);
     let results: Vec<(CrateSpec, ProviderResult<DocsData>)> = provider.get_docs_data(vec![crate_spec.clone()], &tracker).await.collect();
 
     // Verify results
@@ -112,14 +115,15 @@ async fn test_docs_provider_not_found() {
     let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
 
     // Create provider with mock server URL
-    let provider = Provider::new(temp_dir.path(), Utc::now(), false, Some(&mock_server.uri()));
+    let cache = Cache::new(temp_dir.path(), core::time::Duration::MAX, Utc::now(), false);
+    let provider = Provider::new(cache, Some(&mock_server.uri()));
 
     // Create crate spec for nonexistent crate
     let crate_spec = CrateSpec::from_arcs(Arc::from("nonexistent"), Arc::new(Version::parse("1.0.0").unwrap()));
 
     // Fetch docs data
     let progress = Arc::new(NoOpProgress) as Arc<dyn Progress>;
-    let tracker = RequestTracker::new(progress.as_ref());
+    let tracker = RequestTracker::new(&progress);
     let results: Vec<(CrateSpec, ProviderResult<DocsData>)> = provider.get_docs_data(vec![crate_spec], &tracker).await.collect();
 
     // Verify results
@@ -151,18 +155,17 @@ async fn test_docs_provider_uses_cache() {
 
     // Pre-populate cache with sentinel data
     let cached_data = make_sentinel_docs_data();
-    let cache_path = temp_dir.path().join("anyhow@1.0.100.json");
-    let envelope = CacheEnvelope::data(Utc::now(), cached_data);
-    let json = serde_json::to_string(&envelope).expect("serialize");
-    fs::write(&cache_path, json).expect("write cache file");
+    let pre_cache = Cache::new(temp_dir.path(), core::time::Duration::MAX, Utc::now(), false);
+    pre_cache.save("anyhow@1.0.100.json", &cached_data).expect("write cache");
 
     // Create provider with ignore_cached=false and no mock server (would fail if it tried to fetch)
     let mock_server = MockServer::start().await;
-    let provider = Provider::new(temp_dir.path(), Utc::now(), false, Some(&mock_server.uri()));
+    let cache = Cache::new(temp_dir.path(), core::time::Duration::MAX, Utc::now(), false);
+    let provider = Provider::new(cache, Some(&mock_server.uri()));
 
     let crate_spec = CrateSpec::from_arcs(Arc::from("anyhow"), Arc::new(Version::parse("1.0.100").unwrap()));
     let progress = Arc::new(NoOpProgress) as Arc<dyn Progress>;
-    let tracker = RequestTracker::new(progress.as_ref());
+    let tracker = RequestTracker::new(&progress);
     let results: Vec<_> = provider.get_docs_data(vec![crate_spec], &tracker).await.collect();
 
     assert_eq!(results.len(), 1);
@@ -191,10 +194,8 @@ async fn test_docs_provider_ignore_cached_bypasses_cache() {
 
     // Pre-populate cache with sentinel data
     let cached_data = make_sentinel_docs_data();
-    let cache_path = temp_dir.path().join("anyhow@1.0.100.json");
-    let envelope = CacheEnvelope::data(Utc::now(), cached_data);
-    let json = serde_json::to_string(&envelope).expect("serialize");
-    fs::write(&cache_path, json).expect("write cache file");
+    let pre_cache = Cache::new(temp_dir.path(), core::time::Duration::MAX, Utc::now(), false);
+    pre_cache.save("anyhow@1.0.100.json", &cached_data).expect("write cache");
 
     // Set up mock server with real fixture
     let zst_data = fs::read(FIXTURE_PATH).expect("Failed to read fixture file");
@@ -210,11 +211,12 @@ async fn test_docs_provider_ignore_cached_bypasses_cache() {
         .await;
 
     // Create provider with ignore_cached=true
-    let provider = Provider::new(temp_dir.path(), Utc::now(), true, Some(&mock_server.uri()));
+    let cache = Cache::new(temp_dir.path(), core::time::Duration::MAX, Utc::now(), true);
+    let provider = Provider::new(cache, Some(&mock_server.uri()));
 
     let crate_spec = CrateSpec::from_arcs(Arc::from("anyhow"), Arc::new(Version::parse("1.0.100").unwrap()));
     let progress = Arc::new(NoOpProgress) as Arc<dyn Progress>;
-    let tracker = RequestTracker::new(progress.as_ref());
+    let tracker = RequestTracker::new(&progress);
     let results: Vec<_> = provider.get_docs_data(vec![crate_spec], &tracker).await.collect();
 
     assert_eq!(results.len(), 1);

@@ -48,21 +48,39 @@ struct RequestCounter {
 /// and `codecov.io`, providing visibility into the query phase of crate analysis.
 ///
 /// Requests are tracked by topic, with separate counters for different request types.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone)]
 pub struct RequestTracker {
     counters: Arc<[RequestCounter; 4]>,
+    progress: Arc<dyn Progress>,
+}
+
+impl core::fmt::Debug for RequestTracker {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RequestTracker")
+            .field("counters", &self.counters)
+            .field("progress", &"<dyn Progress>")
+            .finish()
+    }
 }
 
 impl RequestTracker {
     /// Create a new request tracker with the given progress reporter.
     #[must_use]
-    pub fn new(progress: &dyn Progress) -> Self {
-        let result = Self::default();
+    pub fn new(progress: &Arc<dyn Progress>) -> Self {
+        let counters: Arc<[RequestCounter; 4]> = Arc::default();
 
-        let counters_clone = Arc::clone(&result.counters);
+        let counters_clone = Arc::clone(&counters);
         progress.set_determinate(Box::new(move || Self::progress_reporter_callback(&counters_clone)));
 
-        result
+        Self {
+            counters,
+            progress: Arc::clone(progress),
+        }
+    }
+
+    /// Print a message line without disrupting the progress indicator.
+    pub fn println(&self, msg: &str) {
+        self.progress.println(msg);
     }
 
     /// Mark that multiple new requests have been issued for the given topic.
@@ -111,6 +129,21 @@ impl RequestTracker {
 mod tests {
     use super::*;
 
+    #[derive(Debug)]
+    struct NoOpProgress;
+
+    impl Progress for NoOpProgress {
+        fn set_phase(&self, _phase: &str) {}
+        fn set_determinate(&self, _callback: Box<dyn Fn() -> (u64, u64, String) + Send + Sync + 'static>) {}
+        fn set_indeterminate(&self, _callback: Box<dyn Fn() -> String + Send + Sync + 'static>) {}
+        fn println(&self, _msg: &str) {}
+        fn done(&self) {}
+    }
+
+    fn test_tracker() -> RequestTracker {
+        RequestTracker::new(&(Arc::new(NoOpProgress) as Arc<dyn Progress>))
+    }
+
     #[test]
     fn test_tracked_topic_name() {
         assert_eq!(TrackedTopic::Coverage.name(), "coverage");
@@ -139,7 +172,7 @@ mod tests {
 
     #[test]
     fn test_add_single_request() {
-        let tracker = RequestTracker::default();
+        let tracker = test_tracker();
         tracker.add_requests(TrackedTopic::Coverage, 1);
 
         let (total, completed, message) = RequestTracker::progress_reporter_callback(&tracker.counters);
@@ -151,7 +184,7 @@ mod tests {
 
     #[test]
     fn test_add_multiple_requests() {
-        let tracker = RequestTracker::default();
+        let tracker = test_tracker();
         tracker.add_requests(TrackedTopic::Docs, 5);
         tracker.add_requests(TrackedTopic::Repos, 3);
 
@@ -165,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_complete_request() {
-        let tracker = RequestTracker::default();
+        let tracker = test_tracker();
         tracker.add_requests(TrackedTopic::Coverage, 3);
         tracker.complete_request(TrackedTopic::Coverage);
 
@@ -178,7 +211,7 @@ mod tests {
 
     #[test]
     fn test_complete_multiple_requests() {
-        let tracker = RequestTracker::default();
+        let tracker = test_tracker();
         tracker.add_requests(TrackedTopic::Codebase, 5);
         tracker.complete_request(TrackedTopic::Codebase);
         tracker.complete_request(TrackedTopic::Codebase);
@@ -193,7 +226,7 @@ mod tests {
 
     #[test]
     fn test_all_requests_completed() {
-        let tracker = RequestTracker::default();
+        let tracker = test_tracker();
         tracker.add_requests(TrackedTopic::Docs, 2);
         tracker.complete_request(TrackedTopic::Docs);
         tracker.complete_request(TrackedTopic::Docs);
@@ -207,7 +240,7 @@ mod tests {
 
     #[test]
     fn test_multiple_topics_mixed_progress() {
-        let tracker = RequestTracker::default();
+        let tracker = test_tracker();
         tracker.add_requests(TrackedTopic::Coverage, 10);
         tracker.add_requests(TrackedTopic::Docs, 5);
         tracker.add_requests(TrackedTopic::Repos, 3);
@@ -237,7 +270,7 @@ mod tests {
 
     #[test]
     fn test_no_requests() {
-        let tracker = RequestTracker::default();
+        let tracker = test_tracker();
 
         let (total, completed, message) = RequestTracker::progress_reporter_callback(&tracker.counters);
 
@@ -248,7 +281,7 @@ mod tests {
 
     #[test]
     fn test_add_requests_with_zero_count() {
-        let tracker = RequestTracker::default();
+        let tracker = test_tracker();
         tracker.add_requests(TrackedTopic::Coverage, 0);
 
         let (total, completed, message) = RequestTracker::progress_reporter_callback(&tracker.counters);
@@ -260,7 +293,7 @@ mod tests {
 
     #[test]
     fn test_message_format_order() {
-        let tracker = RequestTracker::default();
+        let tracker = test_tracker();
         // Add in reverse order to ensure output follows topic enum order
         tracker.add_requests(TrackedTopic::Codebase, 1);
         tracker.add_requests(TrackedTopic::Repos, 1);
@@ -280,7 +313,7 @@ mod tests {
 
     #[test]
     fn test_tracker_clone() {
-        let tracker1 = RequestTracker::default();
+        let tracker1 = test_tracker();
         tracker1.add_requests(TrackedTopic::Coverage, 5);
         tracker1.complete_request(TrackedTopic::Coverage);
 

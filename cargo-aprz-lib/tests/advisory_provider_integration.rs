@@ -7,6 +7,7 @@
 #![cfg(feature = "network_tests")]
 
 use cargo_aprz_lib::facts::advisories::{AdvisoryData, Provider};
+use cargo_aprz_lib::facts::cache::Cache;
 use cargo_aprz_lib::facts::{CrateSpec, Progress, ProviderResult};
 use chrono::Utc;
 use semver::Version;
@@ -22,6 +23,7 @@ impl Progress for NoOpProgress {
     fn set_phase(&self, _phase: &str) {}
     fn set_determinate(&self, _callback: Box<dyn Fn() -> (u64, u64, String) + Send + Sync + 'static>) {}
     fn set_indeterminate(&self, _callback: Box<dyn Fn() -> String + Send + Sync + 'static>) {}
+    fn println(&self, _msg: &str) {}
     fn done(&self) {}
 }
 
@@ -46,15 +48,8 @@ async fn shared_provider() -> &'static Provider {
             core::mem::forget(temp_dir);
 
             let progress = Arc::new(NoOpProgress) as Arc<dyn Progress>;
-            let provider = Provider::new(
-                &cache_path,
-                core::time::Duration::from_secs(365 * 24 * 3600),
-                progress,
-                Utc::now(),
-                false,
-            )
-            .await
-            .expect("Failed to create advisory provider");
+            let cache = Cache::new(&cache_path, core::time::Duration::from_secs(365 * 24 * 3600), Utc::now(), false);
+            let provider = Provider::new(&cache, progress).await.expect("Failed to create advisory provider");
 
             SharedProvider {
                 provider,
@@ -241,28 +236,18 @@ async fn test_advisory_provider_cache_reuse() {
     let progress = Arc::new(NoOpProgress) as Arc<dyn Progress>;
 
     // First creation downloads the database
-    let provider1 = Provider::new(
-        temp_dir.path(),
-        core::time::Duration::from_secs(365 * 24 * 3600),
-        Arc::clone(&progress),
-        Utc::now(),
-        false,
-    )
-    .await
-    .expect("First provider creation should succeed");
+    let cache1 = Cache::new(temp_dir.path(), core::time::Duration::from_secs(365 * 24 * 3600), Utc::now(), false);
+    let provider1 = Provider::new(&cache1, Arc::clone(&progress))
+        .await
+        .expect("First provider creation should succeed");
 
     let results1: Vec<_> = provider1.get_advisory_data(vec![make_spec("hyper", "0.14.10")]).await.collect();
 
     // Second creation should reuse the cached database (no download)
-    let provider2 = Provider::new(
-        temp_dir.path(),
-        core::time::Duration::from_secs(365 * 24 * 3600),
-        progress,
-        Utc::now(),
-        false,
-    )
-    .await
-    .expect("Second provider creation with cache should succeed");
+    let cache2 = Cache::new(temp_dir.path(), core::time::Duration::from_secs(365 * 24 * 3600), Utc::now(), false);
+    let provider2 = Provider::new(&cache2, progress)
+        .await
+        .expect("Second provider creation with cache should succeed");
 
     let results2: Vec<_> = provider2.get_advisory_data(vec![make_spec("hyper", "0.14.10")]).await.collect();
 

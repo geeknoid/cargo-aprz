@@ -1,6 +1,46 @@
 # cargo-aprz
 
-## 0.7.0 2026-02-16
+## 0.8.0 - 2026-02-18
+
+### Added
+
+- New `Throttler` type for concurrency control, limiting each provider to a fixed number of
+  outstanding requests and supporting temporary pause-and-resume on rate limit backpressure.
+
+### Changed
+
+- All providers (coverage, docs, hosting, codebase, advisories) now use the `Throttler` for
+  concurrency limiting instead of ad-hoc approaches.
+- Hosting provider: revamped scheduling with per-repo retry loop and automatic rate-limit
+  pause/resume across all concurrent tasks.
+- Hosting provider: consolidated issue/PR statistics computation into a single-pass design,
+  eliminating intermediate `Vec` allocations and redundant iterations.
+- Hosting provider: unified duplicated age-stats logic (`compute_age`, `compute_merged_pr_age`)
+  into a single `compute_age_stats` function.
+- Hosting provider: corrected `ISSUE_PAGE_SIZE` from 255 to 100 to match GitHub API maximum.
+- Codebase provider: consolidated 6 sequential git calls into a single `get_commit_stats` invocation
+  that computes all commit statistics in one pass.
+- Codebase provider: switched contributor counting from `git log --format=%ae` with client-side
+  deduplication to `git shortlog -sne --all`.
+- Docs provider: inlined `download_zst` into `fetch_docs_for_crate_core`, eliminating the
+  `DownloadError` enum and reducing `Provider` clones.
+- Docs provider: deferred backtick-string allocation in broken-link detection using short-circuit evaluation.
+- Improved logging consistency across all providers: use `{:#}` for error formatting, use host
+  display names (GitHub/Codeberg) instead of generic "hosting API" in messages, and consolidated
+  redundant debug log calls.
+
+### Fixed
+
+- Hosting provider: closed issues with missing `closed_at` no longer count as "0 day" age,
+  fixing downward skew in age statistics.
+- Coverage provider: distinguished 4xx (permanent, cached as unavailable) from 5xx (transient,
+  returned as error) HTTP responses.
+- Coverage provider: tightened SVG "unknown" detection from `contains("unknown")` to
+  `contains(">unknown<")` to reduce false positives.
+- Removed duplicate warn-level logging for unsupported hosts in the hosting provider.
+- Removed double error logging for sync failures in the codebase provider.
+
+## 0.7.0 - 2026-02-16
 
 ### Fixed
 
@@ -15,13 +55,13 @@
 - Added support for negative caching to avoid repeated 
 - requests for permanently unavailable data (e.g., missing docs, unsupported hosts, parse errors).
 
-## 0.6.1 2026-02-16
+## 0.6.1 - 2026-02-16
 
 ### Fixed
 
 - Fixed `--version` displaying incorrect program name.
 
-## 0.6.0 2026-02-13
+## 0.6.0 - 2026-02-13
 
 ### Added
 
@@ -34,7 +74,7 @@
 - Renamed the `--check` option to `--error-if-high-risk`.
 - Improve crate table download perf.
 
-## 0.5.0 2026-02-12
+## 0.5.0 - 2026-02-12
 
 ### Added
 
@@ -147,7 +187,7 @@
   - `activity.median_open_pull_request_age_days`
   - `activity.p90_open_pull_request_age_days`
 
-## 0.3.0 2026-02-10
+## 0.3.0 - 2026-02-10
 
 ### Changed
 
@@ -155,7 +195,7 @@
 - Renamed the `deny_if_any` expressions in config to `high_risk_if_any`.
 - Replaced the `accept_if_all' and `accept_if_any` expressions in config with `eval'
 
-## 0.2.0 2026-02-09
+## 0.2.0 - 2026-02-09
 
 ### Added
 

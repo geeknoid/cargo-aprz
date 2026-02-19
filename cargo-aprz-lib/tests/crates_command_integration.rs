@@ -17,6 +17,7 @@ use std::io::Cursor;
 struct TestHost {
     output_buf: Vec<u8>,
     error_buf: Vec<u8>,
+    exit_code: Option<i32>,
 }
 
 impl TestHost {
@@ -24,6 +25,7 @@ impl TestHost {
         Self {
             output_buf: Vec::new(),
             error_buf: Vec::new(),
+            exit_code: None,
         }
     }
 
@@ -45,7 +47,9 @@ impl Host for TestHost {
         Cursor::new(&mut self.error_buf)
     }
 
-    fn exit(&mut self, _code: i32) {}
+    fn exit(&mut self, code: i32) {
+        self.exit_code = Some(code);
+    }
 }
 
 #[tokio::test]
@@ -58,7 +62,7 @@ async fn test_crates_command_all_report_types() {
     let excel_path = temp_dir.path().join("report.xlsx");
 
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         [
             "cargo",
@@ -80,7 +84,7 @@ async fn test_crates_command_all_report_types() {
     )
     .await;
 
-    assert!(result.is_ok(), "crates command failed: {result:?}");
+    assert!(host.error_str().is_empty(), "crates command failed: {}", host.error_str());
 
     // JSON report
     assert!(json_path.exists(), "JSON report file should be created");
@@ -125,7 +129,7 @@ async fn test_crates_command_csv_output() {
     let csv_path = temp_dir.path().join("report.csv");
 
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         [
             "cargo",
@@ -140,7 +144,7 @@ async fn test_crates_command_csv_output() {
     )
     .await;
 
-    assert!(result.is_ok(), "crates command failed: {result:?}");
+    assert!(host.error_str().is_empty(), "crates command failed: {}", host.error_str());
     assert!(csv_path.exists(), "CSV report file should be created");
 
     let csv_content = std::fs::read_to_string(&csv_path).expect("read CSV");
@@ -158,13 +162,13 @@ async fn test_crates_command_csv_output() {
 #[cfg_attr(miri, ignore = "Miri cannot call mkdir")]
 async fn test_crates_command_console_output() {
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         ["cargo", "aprz", "crates", "serde@1.0.200", "--color", "never", "--console"],
     )
     .await;
 
-    assert!(result.is_ok(), "crates command failed: {result:?}");
+    assert!(host.error_str().is_empty(), "crates command failed: {}", host.error_str());
 
     let output = host.output_str();
     assert!(output.contains("serde"), "console output should mention the crate name");
@@ -177,7 +181,7 @@ async fn test_crates_command_multiple_crates() {
     let json_path = temp_dir.path().join("report.json");
 
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         [
             "cargo",
@@ -193,7 +197,7 @@ async fn test_crates_command_multiple_crates() {
     )
     .await;
 
-    assert!(result.is_ok(), "crates command failed: {result:?}");
+    assert!(host.error_str().is_empty(), "crates command failed: {}", host.error_str());
 
     let json_content = std::fs::read_to_string(&json_path).expect("read JSON");
     let parsed: serde_json::Value = serde_json::from_str(&json_content).expect("valid JSON");
@@ -210,7 +214,7 @@ async fn test_crates_command_multiple_crates() {
 #[cfg_attr(miri, ignore = "Miri cannot call mkdir")]
 async fn test_crates_command_nonexistent_crate() {
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         [
             "cargo",
@@ -225,7 +229,11 @@ async fn test_crates_command_nonexistent_crate() {
     .await;
 
     // Should succeed (non-existent crates are reported, not fatal)
-    assert!(result.is_ok(), "crates command should not fail for unknown crates: {result:?}");
+    assert!(
+        host.exit_code.is_none(),
+        "crates command should not fail for unknown crates: {}",
+        host.error_str()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -237,14 +245,13 @@ async fn test_crates_command_nonexistent_crate() {
 #[cfg_attr(miri, ignore = "Miri cannot call mkdir")]
 async fn test_crates_command_misspelled_crate_shows_suggestions() {
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         ["cargo", "aprz", "crates", "serdee@1.0.0", "--color", "never", "--console"],
     )
     .await;
 
     // The command itself succeeds; the crate is reported as not found
-    assert!(result.is_ok(), "should not fail: {result:?}");
 
     let error_output = host.error_str();
     assert!(
@@ -261,13 +268,11 @@ async fn test_crates_command_misspelled_crate_shows_suggestions() {
 #[cfg_attr(miri, ignore = "Miri cannot call mkdir")]
 async fn test_crates_command_nonexistent_version() {
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         ["cargo", "aprz", "crates", "serde@99.99.99", "--color", "never", "--console"],
     )
     .await;
-
-    assert!(result.is_ok(), "should not fail: {result:?}");
 
     let error_output = host.error_str();
     assert!(
@@ -292,7 +297,7 @@ async fn test_crates_command_with_error_if_high_risk_flag() {
     let json_path = temp_dir.path().join("report.json");
 
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         [
             "cargo",
@@ -309,7 +314,11 @@ async fn test_crates_command_with_error_if_high_risk_flag() {
     .await;
 
     // --error-if-high-risk with no expressions means evaluation succeeds (nothing to deny)
-    assert!(result.is_ok(), "crates --error-if-high-risk should succeed: {result:?}");
+    assert!(
+        host.error_str().is_empty(),
+        "crates --error-if-high-risk should succeed: {}",
+        host.error_str()
+    );
 
     let json_content = std::fs::read_to_string(&json_path).expect("read JSON");
     let parsed: serde_json::Value = serde_json::from_str(&json_content).expect("valid JSON");

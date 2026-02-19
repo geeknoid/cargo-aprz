@@ -13,7 +13,7 @@ type ProgressCallback = Box<dyn Fn() -> (u64, u64, String) + Send + Sync>;
 const REFRESH_INTERVAL_MS: u64 = 100;
 
 const DETERMINATE_TEMPLATE: &str = "{prefix:>12.bold.cyan} [{bar:25}] {msg}";
-const INDETERMINATE_TEMPLATE: &str = "  {prefix:>8.bold.cyan} [{spinner}] {msg}";
+const INDETERMINATE_TEMPLATE: &str = "{prefix:>12.bold.cyan} [{spinner}] {msg}";
 
 struct DelayedProgressState {
     visible_after: Instant,
@@ -164,6 +164,11 @@ impl Progress for ProgressReporter {
                     "==                       ",
                 ]),
         );
+    }
+
+    /// Print a message line without disrupting the progress indicator.
+    fn println(&self, msg: &str) {
+        self.bar.suspend(|| eprintln!("{msg}"));
     }
 
     /// Finish and clear the progress indicator.

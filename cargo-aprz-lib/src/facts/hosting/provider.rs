@@ -3,37 +3,27 @@ use super::{AgeStats, HostingData, TimeWindowStats};
 use crate::Result;
 use crate::facts::ProviderResult;
 use crate::facts::RepoSpec;
-use crate::facts::cache_doc::{CacheEnvelope, EnvelopePayload};
+use crate::facts::cache::{Cache, CacheResult};
 use crate::facts::crate_spec::{self, CrateSpec};
 use crate::facts::path_utils::sanitize_path_component;
 use crate::facts::request_tracker::{RequestTracker, TrackedTopic};
+use crate::facts::throttler::Throttler;
 use chrono::{DateTime, Utc};
 use compact_str::CompactString;
 use core::time::Duration;
 use futures_util::future::join_all;
 use ohno::EnrichableExt;
 use reqwest::header::LINK;
-use core::borrow::Borrow;
 use crate::HashMap;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 const LOG_TARGET: &str = "   hosting";
 const SECONDS_PER_DAY: f64 = 86400.0;
 const ISSUE_LOOKBACK_DAYS: i64 = 365 * 10;
-const ISSUE_PAGE_SIZE: u8 = 255;
+const ISSUE_PAGE_SIZE: u8 = 100;
 const MAX_ISSUE_PAGES: u32 = 10;
 const MAX_RATE_LIMIT_WAIT_SECS: u64 = 3600;
-
-/// Initial batch size for repository requests
-const INITIAL_BATCH_SIZE: usize = 16;
-
-/// Maximum batch size for repository requests
-const MAX_BATCH_SIZE: usize = 64;
-
-/// Estimated number of API requests per repository
-/// Each repo requires approximately 2 requests: repo info, issues
-const ESTIMATED_REQUESTS_PER_REPO: usize = 2;
+const MAX_CONCURRENT_REQUESTS: usize = 5;
 
 /// Configuration for a specific hosting provider
 #[derive(Debug, Clone, Copy)]
@@ -81,7 +71,7 @@ macro_rules! unwrap_or_return {
 /// Takes operation name strings and constructs error messages
 /// Warning is optional - if provided, logs on failure
 macro_rules! unwrap_repo_result {
-    ($expr:expr, $repo_spec:expr, $operation:expr, $now:expr, $cache_path:expr $(, $warn_operation:expr)?) => {
+    ($expr:expr, $repo_spec:expr, $operation:expr, $cache:expr, $cache_filename:expr $(, $warn_operation:expr)?) => {
         match $expr {
             HostingApiResult::Success(data, rate_limit) => (data, rate_limit),
             HostingApiResult::RateLimited(rate_limit) => {
@@ -94,7 +84,7 @@ macro_rules! unwrap_repo_result {
             }
             HostingApiResult::NotFound(rate_limit) => {
                 let reason = format!("repository '{}' not found", $repo_spec);
-                if let Err(e) = CacheEnvelope::<HostingData>::no_data($now, &reason).save(&$cache_path) {
+                if let Err(e) = $cache.save_no_data($cache_filename, &reason) {
                     log::debug!(target: LOG_TARGET, "Could not save cache for '{}': {e:#}", $repo_spec);
                 }
                 return RepoData {
@@ -154,21 +144,17 @@ impl RepoData {
 #[derive(Debug, Clone)]
 pub struct Provider {
     hosts: Vec<(Host, Client)>,
-    cache_dir: Arc<Path>,
-    cache_ttl: Duration,
-    now: DateTime<Utc>,
-    ignore_cached: bool,
+    cache: Cache,
+    throttler: Arc<Throttler>,
 }
 
 impl Provider {
     pub fn new(
         github_token: Option<&str>,
         codeberg_token: Option<&str>,
-        cache_dir: impl AsRef<Path>,
-        cache_ttl: Duration,
-        now: DateTime<Utc>,
-        ignore_cached: bool,
+        cache: Cache,
     ) -> Result<Self> {
+        let now = cache.now();
         let mut hosts = Vec::with_capacity(SUPPORTED_HOSTS.len());
 
         for host in SUPPORTED_HOSTS {
@@ -185,10 +171,8 @@ impl Provider {
 
         Ok(Self {
             hosts,
-            cache_dir: Arc::from(cache_dir.as_ref()),
-            cache_ttl,
-            now,
-            ignore_cached,
+            cache,
+            throttler: Throttler::new(MAX_CONCURRENT_REQUESTS),
         })
     }
 
@@ -212,10 +196,21 @@ impl Provider {
                 repos_by_host.entry(host.host_domain).or_default().push(repo_spec.clone());
                 let _ = crates_by_host.entry(host.host_domain).or_default().insert(repo_spec, crate_specs);
             } else {
-                log::warn!(target: LOG_TARGET, "Unsupported host '{host_domain}', cannot fetch hosting data");
-                let host_domain: CompactString = host_domain.into();
+                let filename = Self::get_cache_filename(host_domain, repo_spec.owner(), repo_spec.repo());
+                let reason: CompactString = format!("unsupported hosting provider: {host_domain}").into();
+
+                match self.cache.load::<HostingData>(&filename) {
+                    CacheResult::Miss => {
+                        log::debug!(target: LOG_TARGET, "Unsupported host '{host_domain}', cannot fetch hosting data for {repo_spec}");
+                        let _ = self.cache.save_no_data(&filename, reason.as_str());
+                    }
+                    _ => {
+                        log::debug!(target: LOG_TARGET, "Using cached unsupported-host result for '{repo_spec}'");
+                    }
+                }
+
                 for crate_spec in crate_specs {
-                    unknown_host_crates.push((crate_spec, host_domain.clone()));
+                    unknown_host_crates.push((crate_spec, reason.clone()));
                 }
             }
         }
@@ -226,11 +221,13 @@ impl Provider {
         }
 
         // Process each supported host in parallel
-        let mut fetch_futures = Vec::with_capacity(self.hosts.len());
+        // Dispatch all repos across all hosts through the throttler
+        let mut fetch_futures = Vec::new();
         for (host, client) in &self.hosts {
             if let Some(repos) = repos_by_host.remove(host.host_domain) {
-                let fut = self.fetch_hosting_data_batch(client, repos, host, tracker);
-                fetch_futures.push(fut);
+                for repo_spec in repos {
+                    fetch_futures.push(self.fetch_with_retry(client, host, repo_spec, tracker));
+                }
             }
         }
 
@@ -242,8 +239,8 @@ impl Provider {
             repo_to_crates_all.extend(crates_map);
         }
 
-        // Flatten results from all hosts and map back to crates
-        let known_host_results = all_results.into_iter().flatten().flat_map(move |repo_data| {
+        // Flatten results and map back to crates
+        let known_host_results = all_results.into_iter().flat_map(move |repo_data| {
             let crate_specs = repo_to_crates_all.remove(&repo_data.repo_spec).expect("repo_spec must exist");
             crate_specs
                 .into_iter()
@@ -251,8 +248,8 @@ impl Provider {
         });
 
         // Create error results for crates from unknown hosts
-        let unknown_host_results = unknown_host_crates.into_iter().map(|(crate_spec, host_domain)| {
-            (crate_spec, ProviderResult::Unavailable(format!("unsupported hosting provider: {host_domain}").into()))
+        let unknown_host_results = unknown_host_crates.into_iter().map(|(crate_spec, reason)| {
+            (crate_spec, ProviderResult::Unavailable(reason))
         });
 
         // Chain all results together
@@ -260,110 +257,49 @@ impl Provider {
             if let ProviderResult::Error(e) = result {
                 log::error!(target: LOG_TARGET, "Could not fetch hosting data for {crate_spec}: {e:#}");
             } else if let ProviderResult::Unavailable(reason) = result {
-                log::debug!(target: LOG_TARGET, "Hosting data unavailable for {crate_spec}: {reason}");
+                log::warn!(target: LOG_TARGET, "Hosting data unavailable for {crate_spec}: {reason}");
             }
         })
     }
 
-    /// Process a batch of repositories using a specific client
-    async fn fetch_hosting_data_batch(
+    /// Fetch hosting data for a repo, retrying on rate limits.
+    ///
+    /// Acquires a throttler permit before each attempt. On rate limit, pauses
+    /// the throttler for all concurrent tasks and retries after the pause.
+    async fn fetch_with_retry(
         &self,
         client: &Client,
-        mut pending_repos: Vec<RepoSpec>,
         host: &Host,
+        repo_spec: RepoSpec,
         tracker: &RequestTracker,
-    ) -> Vec<RepoData> {
-        let mut results = Vec::with_capacity(pending_repos.len());
-        let mut next_batch_size = INITIAL_BATCH_SIZE;
+    ) -> RepoData {
+        loop {
+            let _permit = self.throttler.acquire().await;
+            let result = self.fetch_hosting_data_for_repo(client, host, repo_spec.clone()).await;
 
-        while !pending_repos.is_empty() {
-            let batch_size = next_batch_size.min(pending_repos.len());
-            let batch = pending_repos.split_off(pending_repos.len() - batch_size);
+            if result.is_rate_limited {
+                if let Some(rate_limit) = result.rate_limit {
+                    let reset_time = rate_limit.reset_at;
+                    let wait_until = reset_time.min(self.cache.now() + chrono::Duration::seconds(MAX_RATE_LIMIT_WAIT_SECS.cast_signed()));
 
-            log::debug!(
-                target: LOG_TARGET,
-                "Processing batch of {} repos ({} remaining)",
-                batch.len(),
-                pending_repos.len()
-            );
+                    if wait_until > self.cache.now() {
+                        let formatted_time = wait_until.with_timezone(&chrono::Local).format("%T");
+                        log::warn!(target: LOG_TARGET, "Hit {} rate limit for repository '{repo_spec}'", host.display_name);
+                        tracker.println(&format!(
+                            "{} rate limit exceeded: Waiting until {formatted_time}...",
+                            host.display_name
+                        ));
 
-            // Fetch data for all repos in this batch concurrently
-            let batch_futures = batch
-                .into_iter()
-                .map(|repo_spec| self.fetch_hosting_data_for_repo(client, host, repo_spec));
-            let batch_results = join_all(batch_futures).await;
-
-            // Separate rate-limited repos from completed ones, and collect rate limit info
-            let mut rate_limited_repos = Vec::new();
-            let mut latest_rate_limit: Option<RateLimitInfo> = None;
-            let mut latest_reset_time: Option<DateTime<Utc>> = None;
-
-            for repo_data in batch_results {
-                if repo_data.is_rate_limited {
-                    // Rate limit hit - queue for retry and track the latest reset time
-                    rate_limited_repos.push(repo_data.repo_spec);
-                    if let Some(rate_limit) = repo_data.rate_limit {
-                        latest_reset_time =
-                            Some(latest_reset_time.map_or(rate_limit.reset_at, |existing| existing.max(rate_limit.reset_at)));
+                        let wait_duration = (wait_until - self.cache.now()).to_std().unwrap_or(Duration::ZERO);
+                        self.throttler.pause_for(wait_duration);
                     }
-                } else {
-                    // Success or non-rate-limit error - add to results and capture rate limit info
-                    if let Some(rate_limit) = repo_data.rate_limit {
-                        latest_rate_limit = Some(rate_limit);
-                    }
-                    results.push(repo_data);
-                    tracker.complete_request(TrackedTopic::Repos);
                 }
+                continue;
             }
 
-            // Handle rate limiting
-            if rate_limited_repos.is_empty() {
-                // No rate limits hit - use rate limit info from responses to adjust batch size
-                if let Some(rate_limit) = latest_rate_limit {
-                    let remaining = rate_limit.remaining;
-                    // Calculate how many repos we can handle with remaining quota
-                    let repos_possible = remaining / ESTIMATED_REQUESTS_PER_REPO;
-                    next_batch_size = repos_possible.clamp(1, MAX_BATCH_SIZE);
-
-                    log::debug!(
-                        target: LOG_TARGET,
-                        "Rate limit status: remaining={remaining}, next_batch_size={next_batch_size}"
-                    );
-                } else {
-                    // No rate limit info available - keep current batch size
-                    log::debug!(
-                        target: LOG_TARGET,
-                        "No rate limit info available, keeping batch size at {next_batch_size}"
-                    );
-                }
-            } else {
-                log::warn!(
-                    target: LOG_TARGET,
-                    "Hit rate limit on {} repos",
-                    rate_limited_repos.len()
-                );
-
-                // Put rate-limited repos back in the queue
-                pending_repos.extend(rate_limited_repos);
-
-                // Use the latest reset time from rate limit info, or fallback to 1 hour
-                let reset_time = latest_reset_time.unwrap_or_else(|| self.now + chrono::Duration::hours(1));
-                let wait_until = reset_time.min(self.now + chrono::Duration::seconds(MAX_RATE_LIMIT_WAIT_SECS.cast_signed()));
-
-                if wait_until > self.now {
-                    let formatted_time = wait_until.with_timezone(&chrono::Local).format("%T");
-                    eprintln!("{} rate limit exceeded: Waiting until {formatted_time}...", host.display_name);
-
-                    let wait_duration = (wait_until - self.now).to_std().unwrap_or(Duration::ZERO);
-                    tokio::time::sleep(wait_duration).await;
-                }
-
-                // After waiting, reset to initial batch size
-                next_batch_size = INITIAL_BATCH_SIZE;
-            }
+            tracker.complete_request(TrackedTopic::Repos);
+            return result;
         }
-
-        results
     }
 
     /// Fetch repository data for a single repository
@@ -371,23 +307,14 @@ impl Provider {
         let owner = repo_spec.owner();
         let repo = repo_spec.repo();
 
-        let cache_path = self.get_cache_path(host.host_domain, owner, repo);
-        if !self.ignore_cached
-            && let Some(envelope) = CacheEnvelope::<HostingData>::load(
-                &cache_path,
-                self.cache_ttl,
-                self.now,
-                format!("hosting data for repository '{repo_spec}'"),
-            )
-        {
-            let result = match envelope.payload {
-                EnvelopePayload::Data(data) => ProviderResult::Found(data),
-                EnvelopePayload::NoData(reason) => ProviderResult::Unavailable(reason.into()),
-            };
-            return RepoData::from_cache(repo_spec, result);
+        let filename = Self::get_cache_filename(host.host_domain, owner, repo);
+        match self.cache.load::<HostingData>(&filename) {
+            CacheResult::Data(data) => return RepoData::from_cache(repo_spec, ProviderResult::Found(data)),
+            CacheResult::NoData(reason) => return RepoData::from_cache(repo_spec, ProviderResult::Unavailable(reason.into())),
+            CacheResult::Miss => {}
         }
 
-        log::info!(target: LOG_TARGET, "Querying hosting API for information on repository '{repo_spec}'");
+        log::info!(target: LOG_TARGET, "Querying {} for information on repository '{repo_spec}'", host.display_name);
 
         let (repo_res, issues_res) = tokio::join!(
             self.get_repo_info(client, owner, repo),
@@ -395,8 +322,8 @@ impl Provider {
         );
 
         // Check for rate limiting or permanent failures in each result
-        let (repo_data, repo_rate_limit) = unwrap_repo_result!(repo_res, repo_spec, "core info", self.now, cache_path);
-        let (issue_pull_stats, issues_rate_limit) = unwrap_repo_result!(issues_res, repo_spec, "issues and pull request info", self.now, cache_path, "issues/PRs");
+        let (repo_data, repo_rate_limit) = unwrap_repo_result!(repo_res, repo_spec, "core info", self.cache, &filename);
+        let (issue_pull_stats, issues_rate_limit) = unwrap_repo_result!(issues_res, repo_spec, "issues and pull request info", self.cache, &filename, "issues/PRs");
 
         // Use the most conservative rate limit info (the one with the least remaining quota)
         let rate_limit = [issues_rate_limit, repo_rate_limit]
@@ -436,9 +363,9 @@ impl Provider {
             merged_pr_age_last_365_days: issue_pull_stats.merged_pr_age_last_365_days,
         };
 
-        log::debug!(target: LOG_TARGET, "Completed hosting API requests for repository '{repo_spec}'");
+        log::debug!(target: LOG_TARGET, "Completed {} API requests for repository '{repo_spec}'", host.display_name);
 
-        let result = match CacheEnvelope::data(self.now, hosting_data.clone()).save(&cache_path) {
+        let result = match self.cache.save(&filename, &hosting_data) {
             Ok(()) => ProviderResult::Found(hosting_data),
             Err(e) => ProviderResult::Error(Arc::new(e)),
         };
@@ -446,12 +373,12 @@ impl Provider {
         RepoData::success(repo_spec, result, rate_limit)
     }
 
-    /// Get the cache file path for a specific repository
-    fn get_cache_path(&self, host_domain: &str, owner: &str, repo: &str) -> PathBuf {
+    /// Get the cache filename for a specific repository
+    fn get_cache_filename(host_domain: &str, owner: &str, repo: &str) -> String {
         let safe_host = sanitize_path_component(host_domain);
         let safe_owner = sanitize_path_component(owner);
         let safe_repo = sanitize_path_component(repo);
-        self.cache_dir.join(&safe_host).join(&safe_owner).join(format!("{safe_repo}.json"))
+        format!("{safe_host}/{safe_owner}/{safe_repo}.json")
     }
 
     /// Construct API URL for a repository with optional path suffix
@@ -470,7 +397,7 @@ impl Provider {
     }
 
     async fn get_issues_and_pulls(&self, client: &Client, owner: &str, repo: &str) -> HostingApiResult<IssueAndPullStats> {
-        let since = self.now - chrono::Duration::days(ISSUE_LOOKBACK_DAYS);
+        let since = self.cache.now() - chrono::Duration::days(ISSUE_LOOKBACK_DAYS);
         let since_str = since.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
 
         let mut all_issues = Vec::with_capacity(ISSUE_PAGE_SIZE as usize);
@@ -513,42 +440,30 @@ impl Provider {
             page_num += 1;
 
             if page_num > MAX_ISSUE_PAGES {
-                log::debug!(target: LOG_TARGET, "Reached maximum issue page limit ({MAX_ISSUE_PAGES}) for '{owner}/{repo}', stopping pagination");
+                log::debug!(target: LOG_TARGET, "Reached maximum issue page limit ({MAX_ISSUE_PAGES}) for '{owner}/{repo}', stopping pagination after {} issues", all_issues.len());
                 break;
             }
         }
 
-        let stats = compute_all_stats(&all_issues, self.now);
+        let stats = compute_all_stats(&all_issues, self.cache.now());
 
         HostingApiResult::Success(stats, latest_rate_limit)
     }
 }
 
-#[expect(clippy::cast_precision_loss, reason = "it happens")]
-#[expect(clippy::cast_possible_truncation, reason = "it happens")]
-#[expect(clippy::cast_sign_loss, reason = "it happens")]
-fn compute_age<I: Borrow<Issue>>(issues: &[I], is_open: bool, now: DateTime<Utc>) -> AgeStats {
-    let mut seconds: Vec<f64> = issues
-        .iter()
-        .filter_map(|issue| {
-            let issue = issue.borrow();
-            let age_seconds = if is_open {
-                (now - issue.created_at).num_seconds() as f64
-            } else {
-                issue
-                    .closed_at
-                    .map_or(0.0, |closed_at| (closed_at - issue.created_at).num_seconds() as f64)
-            };
-            // Filter out NaN and negative values
-            (age_seconds.is_finite() && age_seconds >= 0.0).then_some(age_seconds)
-        })
+/// Compute age statistics from an iterator of durations in seconds.
+#[expect(clippy::cast_precision_loss, reason = "acceptable for statistics")]
+#[expect(clippy::cast_possible_truncation, reason = "acceptable for day conversion")]
+#[expect(clippy::cast_sign_loss, reason = "values are filtered to be non-negative")]
+fn compute_age_stats(seconds_iter: impl Iterator<Item = f64>) -> AgeStats {
+    let mut seconds: Vec<f64> = seconds_iter
+        .filter(|&s| s.is_finite() && s >= 0.0)
         .collect();
 
     if seconds.is_empty() {
         return AgeStats::default();
     }
 
-    // Now we can safely use unwrap since we filtered out NaN values
     seconds.sort_by(|a, b| a.partial_cmp(b).expect("no NaN values should be present"));
 
     AgeStats {
@@ -558,6 +473,19 @@ fn compute_age<I: Borrow<Issue>>(issues: &[I], is_open: bool, now: DateTime<Utc>
         p90: (percentile(&seconds, 90.0) / SECONDS_PER_DAY) as u32,
         p95: (percentile(&seconds, 95.0) / SECONDS_PER_DAY) as u32,
     }
+}
+
+/// Duration in seconds from creation to close. Returns `None` if `closed_at` is missing.
+#[expect(clippy::cast_precision_loss, reason = "acceptable for duration")]
+fn closed_age_seconds(issue: &Issue) -> Option<f64> {
+    issue.closed_at.map(|closed_at| (closed_at - issue.created_at).num_seconds() as f64)
+}
+
+/// Duration in seconds from creation to merge. Returns `None` if not merged.
+#[expect(clippy::cast_precision_loss, reason = "acceptable for duration")]
+fn merged_pr_age_seconds(issue: &Issue) -> Option<f64> {
+    let merged_at = issue.pull_request.as_ref()?.merged_at?;
+    Some((merged_at - issue.created_at).num_seconds() as f64)
 }
 
 fn percentile(sorted_data: &[f64], percentile: f64) -> f64 {
@@ -595,81 +523,39 @@ struct IssueAndPullStats {
     merged_pr_age_last_365_days: AgeStats,
 }
 
-/// Count events within time windows based on an extracted timestamp.
-fn count_windowed(items: &[Issue], cutoff_90: DateTime<Utc>, cutoff_180: DateTime<Utc>, cutoff_365: DateTime<Utc>, timestamp_fn: impl Fn(&Issue) -> Option<DateTime<Utc>>) -> TimeWindowStats {
-    let mut stats = TimeWindowStats {
-        total: 0,
-        last_365_days: 0,
-        last_180_days: 0,
-        last_90_days: 0,
-    };
-    for item in items {
-        if let Some(ts) = timestamp_fn(item) {
-            stats.total += 1;
-            if ts >= cutoff_365 {
-                stats.last_365_days += 1;
-                if ts >= cutoff_180 {
-                    stats.last_180_days += 1;
-                    if ts >= cutoff_90 {
-                        stats.last_90_days += 1;
-                    }
-                }
+/// Increment time window counters for a given timestamp.
+fn increment_window(stats: &mut TimeWindowStats, ts: DateTime<Utc>, cutoff_90: DateTime<Utc>, cutoff_180: DateTime<Utc>, cutoff_365: DateTime<Utc>) {
+    stats.total += 1;
+    if ts >= cutoff_365 {
+        stats.last_365_days += 1;
+        if ts >= cutoff_180 {
+            stats.last_180_days += 1;
+            if ts >= cutoff_90 {
+                stats.last_90_days += 1;
             }
         }
     }
-    stats
-}
-
-/// Compute age stats for merged PRs from a filtered list.
-#[expect(clippy::cast_precision_loss, reason = "it happens")]
-#[expect(clippy::cast_possible_truncation, reason = "it happens")]
-#[expect(clippy::cast_sign_loss, reason = "it happens")]
-fn compute_merged_pr_age(prs: &[&Issue]) -> AgeStats {
-    let mut seconds: Vec<f64> = prs
-        .iter()
-        .filter_map(|pr| {
-            let merged_at = pr.pull_request.as_ref()?.merged_at?;
-            let age = (merged_at - pr.created_at).num_seconds() as f64;
-            (age.is_finite() && age >= 0.0).then_some(age)
-        })
-        .collect();
-
-    if seconds.is_empty() {
-        return AgeStats::default();
-    }
-
-    seconds.sort_by(|a, b| a.partial_cmp(b).expect("no NaN values should be present"));
-
-    AgeStats {
-        avg: (seconds.iter().sum::<f64>() / seconds.len() as f64 / SECONDS_PER_DAY) as u32,
-        p50: (percentile(&seconds, 50.0) / SECONDS_PER_DAY) as u32,
-        p75: (percentile(&seconds, 75.0) / SECONDS_PER_DAY) as u32,
-        p90: (percentile(&seconds, 90.0) / SECONDS_PER_DAY) as u32,
-        p95: (percentile(&seconds, 95.0) / SECONDS_PER_DAY) as u32,
-    }
-}
-
-fn compute_merged_pr_age_since(prs: &[&Issue], cutoff: DateTime<Utc>) -> AgeStats {
-    let filtered: Vec<&Issue> = prs
-        .iter()
-        .filter(|pr| {
-            pr.pull_request
-                .as_ref()
-                .and_then(|p| p.merged_at)
-                .is_some_and(|t| t >= cutoff)
-        })
-        .copied()
-        .collect();
-    compute_merged_pr_age(&filtered)
 }
 
 /// Compute all issue and PR statistics from the raw issue list.
+#[expect(clippy::cast_precision_loss, reason = "acceptable for duration")]
 fn compute_all_stats(all_issues: &[Issue], now: DateTime<Utc>) -> IssueAndPullStats {
-    let mut open_issues = Vec::new();
-    let mut closed_issues = Vec::new();
-    let mut open_pulls = Vec::new();
-    let mut closed_pulls = Vec::new();
+    let cutoff_90 = now - chrono::Duration::days(90);
+    let cutoff_180 = now - chrono::Duration::days(180);
+    let cutoff_365 = now - chrono::Duration::days(365);
 
+    let mut open_issues: Vec<&Issue> = Vec::new();
+    let mut closed_issues: Vec<&Issue> = Vec::new();
+    let mut open_pulls: Vec<&Issue> = Vec::new();
+    let mut closed_pulls: Vec<&Issue> = Vec::new();
+
+    let mut issues_opened = TimeWindowStats::default();
+    let mut issues_closed = TimeWindowStats::default();
+    let mut prs_opened = TimeWindowStats::default();
+    let mut prs_merged = TimeWindowStats::default();
+    let mut prs_closed = TimeWindowStats::default();
+
+    // Classify issues/PRs and compute windowed counts in a single pass
     for issue in all_issues {
         let is_pr = issue.pull_request.is_some();
         let is_open = issue.state == IssueState::Open;
@@ -681,68 +567,63 @@ fn compute_all_stats(all_issues: &[Issue], now: DateTime<Utc>) -> IssueAndPullSt
             (false, false) => &mut closed_issues,
         };
         target.push(issue);
+
+        if is_pr {
+            increment_window(&mut prs_opened, issue.created_at, cutoff_90, cutoff_180, cutoff_365);
+            if let Some(closed) = issue.closed_at {
+                increment_window(&mut prs_closed, closed, cutoff_90, cutoff_180, cutoff_365);
+            }
+            if let Some(merged) = issue.pull_request.as_ref().and_then(|p| p.merged_at) {
+                increment_window(&mut prs_merged, merged, cutoff_90, cutoff_180, cutoff_365);
+            }
+        } else {
+            increment_window(&mut issues_opened, issue.created_at, cutoff_90, cutoff_180, cutoff_365);
+            if let Some(closed) = issue.closed_at {
+                increment_window(&mut issues_closed, closed, cutoff_90, cutoff_180, cutoff_365);
+            }
+        }
     }
 
-    let open_issue_age = compute_age(&open_issues, true, now);
-    let open_pr_age = compute_age(&open_pulls, true, now);
+    // Open ages: duration from creation to now
+    let open_issue_age = compute_age_stats(open_issues.iter().map(|i| (now - i.created_at).num_seconds() as f64));
+    let open_pr_age = compute_age_stats(open_pulls.iter().map(|i| (now - i.created_at).num_seconds() as f64));
 
-    let cutoff_90 = now - chrono::Duration::days(90);
-    let cutoff_180 = now - chrono::Duration::days(180);
-    let cutoff_365 = now - chrono::Duration::days(365);
+    // Closed issue ages (issues without closed_at are excluded via closed_age_seconds)
+    let closed_issue_age = compute_age_stats(closed_issues.iter().copied().filter_map(closed_age_seconds));
+    let closed_issue_age_last_90_days = compute_age_stats(
+        closed_issues.iter().copied()
+            .filter(|i| i.closed_at.is_some_and(|t| t >= cutoff_90))
+            .filter_map(closed_age_seconds),
+    );
+    let closed_issue_age_last_180_days = compute_age_stats(
+        closed_issues.iter().copied()
+            .filter(|i| i.closed_at.is_some_and(|t| t >= cutoff_180))
+            .filter_map(closed_age_seconds),
+    );
+    let closed_issue_age_last_365_days = compute_age_stats(
+        closed_issues.iter().copied()
+            .filter(|i| i.closed_at.is_some_and(|t| t >= cutoff_365))
+            .filter_map(closed_age_seconds),
+    );
 
-    let issues_opened = count_windowed(all_issues, cutoff_90, cutoff_180, cutoff_365, |i| {
-        (i.pull_request.is_none()).then_some(i.created_at)
-    });
-    let issues_closed = count_windowed(all_issues, cutoff_90, cutoff_180, cutoff_365, |i| {
-        if i.pull_request.is_none() { i.closed_at } else { None }
-    });
-    let prs_opened = count_windowed(all_issues, cutoff_90, cutoff_180, cutoff_365, |i| {
-        i.pull_request.as_ref().map(|_| i.created_at)
-    });
-    let prs_merged = count_windowed(all_issues, cutoff_90, cutoff_180, cutoff_365, |i| {
-        let pr = i.pull_request.as_ref()?;
-        pr.merged_at
-    });
-    let prs_closed = count_windowed(all_issues, cutoff_90, cutoff_180, cutoff_365, |i| {
-        if i.pull_request.is_some() { i.closed_at } else { None }
-    });
-
-    // Closed issue age stats per window
-    let closed_issue_age = compute_age(&closed_issues, false, now);
-
-    let closed_issues_90: Vec<&Issue> = closed_issues
-        .iter()
-        .filter(|i| i.closed_at.is_some_and(|t| t >= cutoff_90))
-        .copied()
-        .collect();
-    let closed_issue_age_last_90_days = compute_age(&closed_issues_90, false, now);
-
-    let closed_issues_180: Vec<&Issue> = closed_issues
-        .iter()
-        .filter(|i| i.closed_at.is_some_and(|t| t >= cutoff_180))
-        .copied()
-        .collect();
-    let closed_issue_age_last_180_days = compute_age(&closed_issues_180, false, now);
-
-    let closed_issues_365: Vec<&Issue> = closed_issues
-        .iter()
-        .filter(|i| i.closed_at.is_some_and(|t| t >= cutoff_365))
-        .copied()
-        .collect();
-    let closed_issue_age_last_365_days = compute_age(&closed_issues_365, false, now);
-
-    // Merged PR age stats per window
-    let all_pulls_flat: Vec<&Issue> = open_pulls.iter().chain(closed_pulls.iter()).copied().collect();
-    let merged_prs_all: Vec<&Issue> = all_pulls_flat
-        .iter()
-        .filter(|pr| pr.pull_request.as_ref().is_some_and(|p| p.merged_at.is_some()))
-        .copied()
-        .collect();
-
-    let merged_pr_age = compute_merged_pr_age(&merged_prs_all);
-    let merged_pr_age_last_90_days = compute_merged_pr_age_since(&merged_prs_all, cutoff_90);
-    let merged_pr_age_last_180_days = compute_merged_pr_age_since(&merged_prs_all, cutoff_180);
-    let merged_pr_age_last_365_days = compute_merged_pr_age_since(&merged_prs_all, cutoff_365);
+    // Merged PR ages (chaining iterators avoids intermediate Vec allocation)
+    let all_pulls = || open_pulls.iter().chain(closed_pulls.iter()).copied();
+    let merged_pr_age = compute_age_stats(all_pulls().filter_map(merged_pr_age_seconds));
+    let merged_pr_age_last_90_days = compute_age_stats(
+        all_pulls()
+            .filter(|i| i.pull_request.as_ref().and_then(|p| p.merged_at).is_some_and(|t| t >= cutoff_90))
+            .filter_map(merged_pr_age_seconds),
+    );
+    let merged_pr_age_last_180_days = compute_age_stats(
+        all_pulls()
+            .filter(|i| i.pull_request.as_ref().and_then(|p| p.merged_at).is_some_and(|t| t >= cutoff_180))
+            .filter_map(merged_pr_age_seconds),
+    );
+    let merged_pr_age_last_365_days = compute_age_stats(
+        all_pulls()
+            .filter(|i| i.pull_request.as_ref().and_then(|p| p.merged_at).is_some_and(|t| t >= cutoff_365))
+            .filter_map(merged_pr_age_seconds),
+    );
 
     IssueAndPullStats {
         open_issues: open_issues.len() as u64,
@@ -798,10 +679,8 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "Miri cannot call GetSystemTimePreciseAsFileTime")]
-    fn test_compute_age_empty() {
-        let issues: Vec<Issue> = vec![];
-        let stats = compute_age(&issues, true, Utc::now());
+    fn test_compute_age_stats_empty() {
+        let stats = compute_age_stats(core::iter::empty());
         assert_eq!(stats.avg, 0);
         assert_eq!(stats.p50, 0);
         assert_eq!(stats.p75, 0);
@@ -810,85 +689,43 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "Miri cannot call GetSystemTimePreciseAsFileTime")]
-    fn test_compute_age_open_issues() {
-        let now = Utc::now();
-        let issues = vec![
-            Issue {
-                created_at: now - chrono::Duration::days(10),
-                closed_at: None,
-                state: IssueState::Open,
-                pull_request: None,
-            },
-            Issue {
-                created_at: now - chrono::Duration::days(20),
-                closed_at: None,
-                state: IssueState::Open,
-                pull_request: None,
-            },
-            Issue {
-                created_at: now - chrono::Duration::days(5),
-                closed_at: None,
-                state: IssueState::Open,
-                pull_request: None,
-            },
-        ];
-
-        let stats = compute_age(&issues, true, now);
-        // Average should be around 11-12 days
+    fn test_compute_age_stats_open_issues() {
+        let seconds_per_day = 86400.0_f64;
+        let stats = compute_age_stats([10.0, 20.0, 5.0].iter().map(|&days| days * seconds_per_day));
+        // Average of 5, 10, 20 = 11.67 days
         assert!(stats.avg >= 11 && stats.avg <= 12);
         assert!(stats.p50 >= 9 && stats.p50 <= 11);
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "Miri cannot call GetSystemTimePreciseAsFileTime")]
-    fn test_compute_age_closed_issues() {
-        let now = Utc::now();
-        let issues = vec![
-            Issue {
-                created_at: now - chrono::Duration::days(30),
-                closed_at: Some(now - chrono::Duration::days(20)),
-                state: IssueState::Closed,
-                pull_request: None,
-            },
-            Issue {
-                created_at: now - chrono::Duration::days(25),
-                closed_at: Some(now - chrono::Duration::days(20)),
-                state: IssueState::Closed,
-                pull_request: None,
-            },
-        ];
+    fn test_compute_age_stats_closed_issues() {
+        let seconds_per_day = 86400.0_f64;
+        // First issue was open for 10 days, second for 5 days
+        let stats = compute_age_stats([10.0, 5.0].iter().map(|&days| days * seconds_per_day));
+        // Average around 7.5 days
+        assert!(stats.avg >= 7 && stats.avg <= 8);
+    }
 
-        let stats = compute_age(&issues, false, now);
-        // Time from creation to close: first was open for 10 days, second for 5 days
-        assert!(stats.avg >= 7 && stats.avg <= 8); // Average around 7.5 days
+    fn test_cache(now: DateTime<Utc>) -> Cache {
+        Cache::new("test_cache", Duration::from_secs(3600), now, false)
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "Miri cannot call GetSystemTimePreciseAsFileTime")]
-    fn test_get_cache_path() {
-        let now = Utc::now();
-        let provider = Provider::new(None, None, "test_cache", Duration::from_secs(3600), now, false).unwrap();
+    fn test_get_cache_filename() {
+        let filename = Provider::get_cache_filename("github.com", "tokio-rs", "tokio");
 
-        let path = provider.get_cache_path("github.com", "tokio-rs", "tokio");
-
-        assert!(path.to_string_lossy().contains("github.com"));
-        assert!(path.to_string_lossy().contains("tokio-rs"));
-        assert!(path.to_string_lossy().contains("tokio.json"));
+        assert!(filename.contains("github.com"));
+        assert!(filename.contains("tokio-rs"));
+        assert!(filename.contains("tokio.json"));
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "Miri cannot call GetSystemTimePreciseAsFileTime")]
-    fn test_get_cache_path_sanitized() {
-        let now = Utc::now();
-        let provider = Provider::new(None, None, "test_cache", Duration::from_secs(3600), now, false).unwrap();
-
-        let path = provider.get_cache_path("evil.com", "../../../etc", "passwd");
+    fn test_get_cache_filename_sanitized() {
+        let filename = Provider::get_cache_filename("evil.com", "../../../etc", "passwd");
 
         // Path traversal should be sanitized
-        let path_str = path.to_string_lossy();
-        assert!(!path_str.contains("../"));
-        assert!(path_str.contains("passwd.json"));
+        assert!(!filename.contains("../"));
+        assert!(filename.contains("passwd.json"));
     }
 
     #[test]
@@ -982,7 +819,7 @@ mod tests {
     #[cfg_attr(miri, ignore = "Miri cannot call GetSystemTimePreciseAsFileTime")]
     fn test_provider_new() {
         let now = Utc::now();
-        let provider = Provider::new(None, None, "test_cache", Duration::from_secs(3600), now, false).unwrap();
+        let provider = Provider::new(None, None, test_cache(now)).unwrap();
         assert_eq!(provider.hosts.len(), 2); // GitHub and Codeberg
     }
 
@@ -993,10 +830,7 @@ mod tests {
         let provider = Provider::new(
             Some("github_token"),
             Some("codeberg_token"),
-            "test_cache",
-            Duration::from_secs(3600),
-            now,
-            false,
+            test_cache(now),
         )
         .unwrap();
         assert_eq!(provider.hosts.len(), 2);

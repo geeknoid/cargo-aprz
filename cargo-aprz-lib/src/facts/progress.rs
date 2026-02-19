@@ -15,6 +15,9 @@ pub trait Progress: Send + Sync {
     /// where the total amount of work is unknown.
     fn set_indeterminate(&self, callback: Box<dyn Fn() -> String + Send + Sync + 'static>);
 
+    /// Print a message line without disrupting the progress indicator.
+    fn println(&self, msg: &str);
+
     /// Finish and clear the progress indicator.
     fn done(&self);
 }

@@ -14,6 +14,7 @@ use std::io::Cursor;
 struct TestHost {
     output_buf: Vec<u8>,
     error_buf: Vec<u8>,
+    exit_code: Option<i32>,
 }
 
 impl TestHost {
@@ -21,11 +22,12 @@ impl TestHost {
         Self {
             output_buf: Vec::new(),
             error_buf: Vec::new(),
+            exit_code: None,
         }
     }
 
-    fn output_str(&self) -> String {
-        String::from_utf8_lossy(&self.output_buf).into_owned()
+    fn error_str(&self) -> String {
+        String::from_utf8_lossy(&self.error_buf).into_owned()
     }
 }
 
@@ -38,16 +40,18 @@ impl Host for TestHost {
         Cursor::new(&mut self.error_buf)
     }
 
-    fn exit(&mut self, _code: i32) {}
+    fn exit(&mut self, code: i32) {
+        self.exit_code = Some(code);
+    }
 }
 
-/// Validate without `--config` so the workspace root is resolved via
-/// `MetadataCommand` (covers validate.rs line 59).
+/// Validate without an explicit config path when no `aprz.toml` exists
+/// should produce an error.
 #[tokio::test]
 #[cfg_attr(miri, ignore = "Miri cannot call CreateIoCompletionPort")]
-async fn test_validate_without_explicit_config() {
+async fn test_validate_without_config_file_errors() {
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         [
             "cargo",
@@ -59,13 +63,10 @@ async fn test_validate_without_explicit_config() {
     )
     .await;
 
-    assert!(result.is_ok(), "validate without --config should succeed: {result:?}");
-
-    let output = host.output_str();
-    // Without --config, no explicit config path is printed; the second writeln
-    // overwrites the first in the Cursor-based TestHost, so we only see the last line.
+    assert_eq!(host.exit_code, Some(1), "validate should fail when no aprz.toml exists");
     assert!(
-        output.contains("default configuration"),
-        "should mention default configuration, got: {output}"
+        host.error_str().contains("could not find configuration file"),
+        "should report missing config file, got: {}",
+        host.error_str()
     );
 }

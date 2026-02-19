@@ -182,9 +182,7 @@ where
         }
     }
 
-    log::debug!(target: LOG_TARGET, "Iteration complete for {crate_spec}: processed {index_len} items (private={private_items}, use_items={use_items}, public_api={number_of_public_api_elements})");
-
-    log::debug!(target: LOG_TARGET, "Finished processing items for {crate_spec}: public_api={number_of_public_api_elements}, documented={documented_count}, examples={number_of_examples_in_docs}, broken_links={broken_doc_links}, has_crate_docs={has_crate_level_docs}");
+    log::debug!(target: LOG_TARGET, "Processed {index_len} items for {crate_spec}: private={private_items}, use_items={use_items}, public_api={number_of_public_api_elements}, documented={documented_count}, examples={number_of_examples_in_docs}, broken_links={broken_doc_links}, has_crate_docs={has_crate_level_docs}");
 
     #[expect(clippy::cast_precision_loss, reason = "loss of precision acceptable for percentage calculation")]
     let doc_coverage_percentage = if number_of_public_api_elements > 0 {
@@ -192,8 +190,6 @@ where
     } else {
         100.0
     };
-
-    log::debug!(target: LOG_TARGET, "Calculated coverage percentage for {crate_spec}: {doc_coverage_percentage}%");
 
     let metrics = DocsMetrics {
         doc_coverage_percentage,
@@ -284,17 +280,12 @@ fn count_broken_links<Id>(docs: &str, resolved_links: &std::collections::HashMap
             // 4. Strip trailing () for method references and try again
             // 5. Try without module path if it contains ::
 
-            // Some links maps include backticks as part of the key (e.g., "`Error::chain`")
-            let text_with_backticks = format!("`{text}`");
-
-            // Strip trailing () from method references like `chain()`
             let text_without_parens = text.strip_suffix("()").unwrap_or(text);
-            let text_without_parens_with_backticks = format!("`{text_without_parens}`");
 
             let is_resolved = resolved_links.contains_key(text)
-                || resolved_links.contains_key(text_with_backticks.as_str())
                 || resolved_links.contains_key(text_without_parens)
-                || resolved_links.contains_key(text_without_parens_with_backticks.as_str())
+                || resolved_links.contains_key(&format!("`{text}`"))
+                || resolved_links.contains_key(&format!("`{text_without_parens}`"))
                 || inline_target.is_some_and(|target| resolved_links.contains_key(target))
                 || link_references.get(text).is_some_and(|target| resolved_links.contains_key(*target))
                 || link_references

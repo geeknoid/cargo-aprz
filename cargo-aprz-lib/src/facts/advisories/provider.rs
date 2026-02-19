@@ -1,10 +1,9 @@
 use super::AdvisoryData;
 use crate::Result;
 use crate::facts::ProviderResult;
-use crate::facts::cache_doc::CacheEnvelope;
+use crate::facts::cache::{Cache, CacheResult};
 use crate::facts::crate_spec::CrateSpec;
 use crate::facts::progress::Progress;
-use chrono::{DateTime, Utc};
 use compact_str::CompactString;
 use core::time::Duration;
 use ohno::IntoAppError;
@@ -28,31 +27,24 @@ const DATABASE_FETCH_TIMEOUT: Duration = Duration::from_secs(60);
 
 impl Provider {
     pub async fn new(
-        cache_dir: impl AsRef<Path>,
-        cache_ttl: Duration,
+        cache: &Cache,
         progress: Arc<dyn Progress>,
-        now: DateTime<Utc>,
-        ignore_cached: bool,
     ) -> Result<Self> {
-        let cache_dir = cache_dir.as_ref();
-        let sync_path = cache_dir.join("last_synced.json");
+        let cache_dir = cache.dir();
+        let sync_filename = "last_synced.json";
         let repo_path = cache_dir.join("repo");
 
-        let needs_fetch = if ignore_cached {
-            true
-        } else {
-            CacheEnvelope::<()>::load(&sync_path, cache_ttl, now, "advisory database").is_none()
-        };
+        let needs_fetch = matches!(cache.load::<()>(sync_filename), CacheResult::Miss);
 
         if needs_fetch {
             download_db(&repo_path, progress.as_ref())
                 .await
                 .into_app_err("downloading the advisory database")?;
-            CacheEnvelope::data(now, ()).save(&sync_path)?;
+            cache.save(sync_filename, &())?;
         }
 
         Ok(Self {
-            database: Arc::new(open_db(&repo_path, progress.as_ref()).await?),
+            database: Arc::new(open_db(&repo_path, progress.as_ref()).await.into_app_err("opening the advisory database")?),
         })
     }
 
@@ -90,7 +82,7 @@ where
     let mut advisories_checked = 0;
     let mut advisories_matched = 0;
 
-    log::info!(target: LOG_TARGET, "Querying the advisory database");
+    log::info!(target: LOG_TARGET, "Querying the advisory database for {crate_count} crate(s)");
 
     for advisory in database.iter() {
         advisories_checked += 1;
@@ -127,7 +119,6 @@ async fn open_db(cache_dir: impl AsRef<Path>, progress: &dyn Progress) -> Result
     run_blocking_with_progress(
         progress,
         "Opening the advisory database",
-        "Opening the advisory database",
         "opening",
         move || Database::open(&cache_path).map_err(Into::into),
     )
@@ -139,7 +130,6 @@ async fn download_db(cache_dir: impl AsRef<Path>, progress: &dyn Progress) -> Re
 
     run_blocking_with_progress(
         progress,
-        &format!("Downloading the advisory database from {DEFAULT_URL}"),
         "Downloading the advisory database",
         "downloading",
         move || {
@@ -153,8 +143,7 @@ async fn download_db(cache_dir: impl AsRef<Path>, progress: &dyn Progress) -> Re
 
 async fn run_blocking_with_progress<T, F>(
     progress: &dyn Progress,
-    start_msg: &str,
-    progress_msg: &str,
+    msg: &str,
     success_verb: &str,
     blocking_fn: F,
 ) -> Result<T>
@@ -162,9 +151,9 @@ where
     F: FnOnce() -> Result<T> + Send + 'static,
     T: Send + 'static,
 {
-    log::info!(target: LOG_TARGET, "{start_msg}");
+    log::info!(target: LOG_TARGET, "{msg}");
 
-    let progress_msg = progress_msg.to_string();
+    let progress_msg = msg.to_string();
     let start_time = std::time::Instant::now();
     progress.set_indeterminate(Box::new(move || progress_msg.clone()));
 

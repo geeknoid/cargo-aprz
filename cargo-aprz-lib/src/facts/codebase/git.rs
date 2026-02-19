@@ -15,17 +15,28 @@ fn path_str(path: &Path) -> Result<&str> {
     path.to_str().into_app_err("invalid UTF-8 in repository path")
 }
 
-/// Clone or update a git repository
-pub async fn get_repo(repo_path: &Path, repo_url: &Url) -> Result<()> {
-    let start_time = std::time::Instant::now();
-
-    get_repo_core(repo_path, repo_url).await?;
-
-    log::debug!(target: LOG_TARGET, "Successfully prepared cached repository from '{repo_url}' in {:.3}s", start_time.elapsed().as_secs_f64());
-    Ok(())
+/// Result of a repository sync operation.
+pub enum RepoStatus {
+    /// Repository was successfully cloned or updated.
+    Ok,
+    /// Repository does not exist on the remote.
+    NotFound,
 }
 
-async fn get_repo_core(repo_path: &Path, repo_url: &Url) -> Result<()> {
+/// Clone or update a git repository
+pub async fn get_repo(repo_path: &Path, repo_url: &Url) -> Result<RepoStatus> {
+    let start_time = std::time::Instant::now();
+
+    let status = get_repo_core(repo_path, repo_url).await?;
+
+    if matches!(status, RepoStatus::Ok) {
+        log::debug!(target: LOG_TARGET, "Successfully prepared cached repository from '{repo_url}' in {:.3}s", start_time.elapsed().as_secs_f64());
+    }
+
+    Ok(status)
+}
+
+async fn get_repo_core(repo_path: &Path, repo_url: &Url) -> Result<RepoStatus> {
     let path_str = path_str(repo_path)?;
 
     if !repo_path.exists() {
@@ -62,10 +73,17 @@ async fn get_repo_core(repo_path: &Path, repo_url: &Url) -> Result<()> {
 
     // Reset to match remote HEAD (discard any local changes)
     let output = run_git_with_timeout(&["-C", path_str, "reset", "--hard", "origin/HEAD"]).await?;
-    check_git_output(&output, "git reset")
+    check_git_output(&output, "git reset")?;
+    Ok(RepoStatus::Ok)
 }
 
-async fn clone_repo(repo_path: &str, repo_url: &Url) -> Result<()> {
+/// Check whether git stderr indicates the repository was not found on the remote.
+fn is_repo_not_found(stderr: &str) -> bool {
+    let stderr_lower = stderr.to_lowercase();
+    stderr_lower.contains("not found") || stderr_lower.contains("does not exist")
+}
+
+async fn clone_repo(repo_path: &str, repo_url: &Url) -> Result<RepoStatus> {
     log::info!(target: LOG_TARGET, "Syncing repository '{repo_url}'");
     // --filter=blob:none creates a partial clone with full history but no blob contents
     let output = run_git_with_timeout(&[
@@ -77,7 +95,25 @@ async fn clone_repo(repo_path: &str, repo_url: &Url) -> Result<()> {
         repo_path,
     ])
     .await?;
-    check_git_output(&output, "git clone")
+
+    if output.status.success() {
+        return Ok(RepoStatus::Ok);
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Clean up any partial clone directory left behind
+    let path = Path::new(repo_path);
+    if path.exists() {
+        let _ = fs::remove_dir_all(path);
+    }
+
+    if is_repo_not_found(&stderr) {
+        log::debug!(target: LOG_TARGET, "Repository '{repo_url}' not found on remote");
+        return Ok(RepoStatus::NotFound);
+    }
+
+    bail!("git clone failed: {stderr}");
 }
 
 fn check_git_output(output: &std::process::Output, operation: &str) -> Result<()> {
@@ -91,63 +127,40 @@ fn check_git_output(output: &std::process::Output, operation: &str) -> Result<()
 /// Count unique contributors in the repository
 pub async fn count_contributors(repo_path: &Path) -> Result<u64> {
     let path_str = path_str(repo_path)?;
-    // %ae = author email (respecting .mailmap)
+    // -s = summary (count only), -n = sort by count, -e = show emails
     // --all ensures we count contributors from all fetched refs, not just HEAD
-    let output = run_git_with_timeout(&["-C", path_str, "log", "--all", "--format=%ae"]).await?;
+    let output = run_git_with_timeout(&["-C", path_str, "shortlog", "-sne", "--all"]).await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("git log failed: {stderr}");
-    }
-
-    // Parse output and count unique emails
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let unique_contributors: crate::HashSet<&str> = stdout.lines().collect();
-
-    Ok(unique_contributors.len() as u64)
-}
-
-/// Count commits in the last N days
-pub async fn count_recent_commits(repo_path: &Path, days: i64) -> Result<u64> {
-    let path_str = path_str(repo_path)?;
-
-    let since_arg = format!("--since={days} days ago");
-    let output = run_git_with_timeout(&["-C", path_str, "rev-list", "--count", &since_arg, "HEAD"]).await?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("git rev-list failed: {stderr}");
+        bail!("git shortlog failed: {stderr}");
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let count = stdout.trim().parse::<u64>().into_app_err("parsing commit count")?;
-
-    Ok(count)
+    Ok(stdout.lines().count() as u64)
 }
 
-/// Count total commits in the repository
-pub async fn count_all_commits(repo_path: &Path) -> Result<u64> {
-    let path_str = path_str(repo_path)?;
-
-    let output = run_git_with_timeout(&["-C", path_str, "rev-list", "--count", "HEAD"]).await?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("git rev-list failed: {stderr}");
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let count = stdout.trim().parse::<u64>().into_app_err("parsing commit count")?;
-
-    Ok(count)
+/// Commit statistics gathered from a single git log invocation.
+pub struct CommitStats {
+    /// Total number of commits.
+    pub commit_count: u64,
+    /// Timestamp of the first (oldest) commit.
+    pub first_commit_at: DateTime<Utc>,
+    /// Timestamp of the most recent commit.
+    pub last_commit_at: DateTime<Utc>,
+    /// Number of commits within each requested time window, in the same order as the input.
+    pub commits_per_window: Vec<u64>,
 }
 
-/// Get the timestamp of the most recent commit
-/// Get the timestamp of the first (oldest) commit in the repository.
-pub async fn get_first_commit_time(repo_path: &Path) -> Result<DateTime<Utc>> {
+/// Gather commit statistics from a single `git log` invocation.
+///
+/// Returns total count, first/last commit timestamps, and per-window commit counts
+/// for each entry in `day_windows`. Uses Unix timestamps for efficient comparison.
+pub async fn get_commit_stats(repo_path: &Path, day_windows: &[i64]) -> Result<CommitStats> {
     let path_str = path_str(repo_path)?;
 
-    let output = run_git_with_timeout(&["-C", path_str, "log", "--reverse", "--format=%aI"]).await?;
+    // %at = author date as Unix timestamp
+    let output = run_git_with_timeout(&["-C", path_str, "log", "--format=%at"]).await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -155,26 +168,49 @@ pub async fn get_first_commit_time(repo_path: &Path) -> Result<DateTime<Utc>> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let first_line = stdout.lines().next().unwrap_or("").trim();
-    let dt = DateTime::parse_from_rfc3339(first_line).into_app_err("parsing first commit timestamp")?;
+    let now = Utc::now().timestamp();
 
-    Ok(dt.to_utc())
-}
+    let mut commit_count: u64 = 0;
+    let mut first_timestamp: Option<i64> = None;
+    let mut last_timestamp: Option<i64> = None;
+    let mut window_counts = vec![0u64; day_windows.len()];
+    let window_thresholds: Vec<i64> = day_windows.iter().map(|days| now - days * 86400).collect();
 
-pub async fn get_last_commit_time(repo_path: &Path) -> Result<DateTime<Utc>> {
-    let path_str = path_str(repo_path)?;
+    for line in stdout.lines() {
+        let ts: i64 = match line.trim().parse() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
 
-    let output = run_git_with_timeout(&["-C", path_str, "log", "-1", "--format=%aI"]).await?;
+        commit_count += 1;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("git log failed: {stderr}");
+        // git log outputs newest first, so first parsed is last_timestamp, last parsed is first_timestamp
+        if last_timestamp.is_none() {
+            last_timestamp = Some(ts);
+        }
+        first_timestamp = Some(ts);
+
+        for (i, threshold) in window_thresholds.iter().enumerate() {
+            if ts >= *threshold {
+                window_counts[i] += 1;
+            }
+        }
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let dt = DateTime::parse_from_rfc3339(stdout.trim()).into_app_err("parsing last commit timestamp")?;
+    let first_commit_at = first_timestamp
+        .and_then(|ts| DateTime::from_timestamp(ts, 0))
+        .unwrap_or(DateTime::UNIX_EPOCH);
 
-    Ok(dt.to_utc())
+    let last_commit_at = last_timestamp
+        .and_then(|ts| DateTime::from_timestamp(ts, 0))
+        .unwrap_or(DateTime::UNIX_EPOCH);
+
+    Ok(CommitStats {
+        commit_count,
+        first_commit_at,
+        last_commit_at,
+        commits_per_window: window_counts,
+    })
 }
 
 async fn run_git_with_timeout(args: &[&str]) -> Result<std::process::Output> {

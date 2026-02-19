@@ -59,11 +59,13 @@ pub fn sniff_github_workflows(repo_path: impl AsRef<Path>) -> Result<GitHubWorkf
         let reader = BufReader::new(file);
 
         for line in reader.lines().map_while(Result::ok) {
-            if !usage.miri_detected && line.to_lowercase().contains("miri") {
+            let lower = line.to_lowercase();
+
+            if !usage.miri_detected && lower.contains("miri") {
                 usage.miri_detected = true;
             }
 
-            if !usage.clippy_detected && line.to_lowercase().contains("clippy") {
+            if !usage.clippy_detected && lower.contains("clippy") {
                 usage.clippy_detected = true;
             }
 

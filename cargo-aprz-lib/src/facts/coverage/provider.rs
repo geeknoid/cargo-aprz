@@ -1,38 +1,36 @@
 use super::CoverageData;
 use crate::Result;
 use crate::facts::ProviderResult;
-use crate::facts::cache_doc::{CacheEnvelope, EnvelopePayload};
+use crate::facts::cache::{Cache, CacheResult};
 use crate::facts::crate_spec::{self, CrateSpec};
 use crate::facts::path_utils::sanitize_path_component;
 use crate::facts::repo_spec::RepoSpec;
 use crate::facts::request_tracker::{RequestTracker, TrackedTopic};
-use chrono::{DateTime, Utc};
-use core::time::Duration;
+use crate::facts::throttler::Throttler;
 use futures_util::future::join_all;
-use ohno::EnrichableExt;
+use ohno::{EnrichableExt, IntoAppError};
 use regex::Regex;
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 
 const LOG_TARGET: &str = "  coverage";
 
-pub const DEFAULT_CODECOV_BASE_URL: &str = "https://codecov.io";
+pub const CODECOV_BASE_URL: &str = "https://codecov.io";
 
 static PERCENT_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(\d+(?:\.\d+)?)%").expect("invalid regex"));
+
+const MAX_CONCURRENT_REQUESTS: usize = 5;
 
 #[derive(Debug, Clone)]
 pub struct Provider {
     client: Arc<reqwest::Client>,
-    cache_dir: Arc<Path>,
-    cache_ttl: Duration,
-    now: DateTime<Utc>,
+    cache: Cache,
     base_url: String,
-    ignore_cached: bool,
+    throttler: Arc<Throttler>,
 }
 
 impl Provider {
     #[must_use]
-    pub fn new(cache_dir: impl AsRef<Path>, cache_ttl: Duration, now: DateTime<Utc>, ignore_cached: bool, base_url: Option<&str>) -> Self {
+    pub fn new(cache: Cache, base_url: Option<&str>) -> Self {
         let client = reqwest::Client::builder()
             .user_agent("cargo-aprz")
             .build()
@@ -40,11 +38,9 @@ impl Provider {
 
         Self {
             client: Arc::new(client),
-            cache_dir: Arc::from(cache_dir.as_ref()),
-            cache_ttl,
-            now,
-            base_url: base_url.unwrap_or(DEFAULT_CODECOV_BASE_URL).to_string(),
-            ignore_cached,
+            cache,
+            base_url: base_url.unwrap_or(CODECOV_BASE_URL).to_string(),
+            throttler: Throttler::new(MAX_CONCURRENT_REQUESTS),
         }
     }
 
@@ -72,13 +68,14 @@ impl Provider {
             if let ProviderResult::Error(e) = result {
                 log::error!(target: LOG_TARGET, "Could not get code coverage data for {crate_spec}: {e:#}");
             } else if let ProviderResult::Unavailable(reason) = result {
-                log::debug!(target: LOG_TARGET, "Coverage unavailable for {crate_spec}: {reason}");
+                log::warn!(target: LOG_TARGET, "Coverage unavailable for {crate_spec}: {reason}");
             }
         })
     }
 
     /// Get code coverage data for a single repository
     async fn fetch_coverage_data_for_repo(&self, repo_spec: RepoSpec, tracker: RequestTracker) -> (RepoSpec, ProviderResult<CoverageData>) {
+        let _permit = self.throttler.acquire().await;
         let result = self.fetch_coverage_data_for_repo_core(&repo_spec).await;
         tracker.complete_request(TrackedTopic::Coverage);
 
@@ -86,31 +83,20 @@ impl Provider {
     }
 
     async fn fetch_coverage_data_for_repo_core(&self, repo_spec: &RepoSpec) -> ProviderResult<CoverageData> {
-        let cache_path = self.get_cache_path(repo_spec);
+        let filename = Self::get_cache_filename(repo_spec);
 
-        if !self.ignore_cached
-            && let Some(envelope) = CacheEnvelope::<CoverageData>::load(
-                &cache_path,
-                self.cache_ttl,
-                self.now,
-                format!("coverage for repository '{repo_spec}'"),
-            )
-        {
-            return match envelope.payload {
-                EnvelopePayload::Data(data) => ProviderResult::Found(data),
-                EnvelopePayload::NoData(reason) => ProviderResult::Unavailable(reason.into()),
-            };
+        match self.cache.load::<CoverageData>(&filename) {
+            CacheResult::Data(data) => return ProviderResult::Found(data),
+            CacheResult::NoData(reason) => return ProviderResult::Unavailable(reason.into()),
+            CacheResult::Miss => {}
         }
 
-        log::debug!(target: LOG_TARGET, "Fetching coverage data for repository '{repo_spec}'");
-
-        let code_coverage_percentage = match get_code_coverage(&self.client, repo_spec, &self.base_url).await {
+        let code_coverage_percentage = match self.get_code_coverage(repo_spec).await {
             Ok(Some(coverage)) => coverage,
             Ok(None) => {
-                log::debug!(target: LOG_TARGET, "No coverage data found for repository '{repo_spec}'");
-                let reason = format!("no coverage data found for repository '{repo_spec}'");
-                let envelope = CacheEnvelope::<CoverageData>::no_data(self.now, &reason);
-                if let Err(e) = envelope.save(&cache_path) {
+                let reason = format!("could not find coverage data for repository '{repo_spec}' on codecov.io");
+                if let Err(e) = self.cache.save_no_data(&filename, &reason) {
+                    log::debug!(target: LOG_TARGET, "Could not save cache for '{repo_spec}': {e:#}");
                     return ProviderResult::Error(Arc::new(e));
                 }
                 return ProviderResult::Unavailable(reason.into());
@@ -128,92 +114,95 @@ impl Provider {
 
         log::debug!(target: LOG_TARGET, "Fetched coverage data for repository '{repo_spec}'");
 
-        let envelope = CacheEnvelope::data(self.now, coverage_data.clone());
-        match envelope.save(&cache_path) {
+        match self.cache.save(&filename, &coverage_data) {
             Ok(()) => ProviderResult::Found(coverage_data),
-            Err(e) => ProviderResult::Error(Arc::new(e)),
+            Err(e) => {
+                log::debug!(target: LOG_TARGET, "Could not save cache for '{repo_spec}': {e:#}");
+                ProviderResult::Error(Arc::new(e))
+            }
         }
     }
 
-    /// Get the cache file path for a repository
-    fn get_cache_path(&self, repo_spec: &RepoSpec) -> PathBuf {
+    /// Get the cache filename for a repository
+    fn get_cache_filename(repo_spec: &RepoSpec) -> String {
         let safe_host = sanitize_path_component(repo_spec.host());
         let safe_owner = sanitize_path_component(repo_spec.owner());
         let safe_repo = sanitize_path_component(repo_spec.repo());
-        let filename = format!("{safe_repo}.json");
-        self.cache_dir.join(safe_host).join(safe_owner).join(filename)
-    }
-}
-
-/// Try to fetch codecov badge for a specific branch
-async fn try_branch(
-    repo_spec: &RepoSpec,
-    client: &reqwest::Client,
-    base_url: &str,
-    owner: &str,
-    repo: &str,
-    branch: &str,
-) -> Result<Option<reqwest::Response>> {
-    let codecov_url = format!("{base_url}/gh/{owner}/{repo}/branch/{branch}/graph/badge.svg");
-    log::info!(target: LOG_TARGET, "Querying {base_url} for coverage of repository '{repo_spec}'");
-
-    let response = crate::facts::resilient_http::resilient_get(client, &codecov_url)
-        .await
-        .inspect_err(|e| log::debug!(target: LOG_TARGET, "Could not send HTTP request to {base_url} ('{branch}' branch): {e:#}"))?;
-
-    let status = response.status();
-    if status.is_success() { Ok(Some(response)) } else { Ok(None) }
-}
-
-/// Fetch codebase coverage data from codecov.io
-pub async fn get_code_coverage(client: &reqwest::Client, repo_spec: &RepoSpec, base_url: &str) -> Result<Option<f64>> {
-    let owner = &repo_spec.owner();
-    let repo = &repo_spec.repo();
-
-    // Try main branch first, then master
-    let response = try_branch(repo_spec, client, base_url, owner, repo, "main").await?;
-    let response = if let Some(r) = response {
-        r
-    } else if let Some(r) = try_branch(repo_spec, client, base_url, owner, repo, "master").await? {
-        r
-    } else {
-        log::info!(target: LOG_TARGET, "No codecov data available for repository '{repo_spec}'");
-        return Ok(None);
-    };
-
-    let text = response
-        .text()
-        .await
-        .inspect_err(|e| log::debug!(target: LOG_TARGET, "Could not read response body: {e:#}"))?;
-
-    log::debug!(target: LOG_TARGET, "Codecov SVG length: {} bytes", text.len());
-
-    // Check if SVG contains "unknown" - codecov returns this when no coverage data is available
-    if text.contains("unknown") {
-        log::debug!(target: LOG_TARGET, "Codecov badge shows 'unknown' - no coverage data available");
-        return Ok(None);
+        format!("{safe_host}/{safe_owner}/{safe_repo}.json")
     }
 
-    // Look for coverage percentage in the SVG
-    // Codecov badges typically have the percentage in a <text> element
-    // Example: <text>89%</text> or <text x="..." y="...">89%</text>
-    if let Some(captures) = PERCENT_REGEX.captures(&text)
-        && let Some(percent_str) = captures.get(1)
-    {
-        let percent_str = percent_str.as_str();
+    /// Fetch codebase coverage data from codecov.io
+    async fn get_code_coverage(&self, repo_spec: &RepoSpec) -> Result<Option<f64>> {
+        log::info!(target: LOG_TARGET, "Querying '{}' for code coverage of repository '{repo_spec}'", self.base_url);
 
-        let coverage = match percent_str.parse::<f64>() {
-            Ok(v) => v,
-            Err(e) => {
-                log::debug!(target: LOG_TARGET, "Could not parse coverage percentage '{percent_str}': {e:#}");
-                return Ok(None);
+        for branch in &["main", "master"] {
+            if let Some(coverage) = self.try_branch_coverage(repo_spec, branch).await? {
+                return Ok(Some(coverage));
             }
-        };
+        }
 
-        log::debug!(target: LOG_TARGET, "Found coverage: {coverage}%");
-        return Ok(Some(coverage));
+        Ok(None)
     }
 
-    log::debug!(target: LOG_TARGET, "No percentage found in codecov SVG");
-    Ok(None)
+    /// Try to fetch codecov badge for a specific branch and extract the coverage percentage.
+    ///
+    /// Returns `Ok(Some(percentage))` if coverage was found, `Ok(None)` if the branch
+    /// has no coverage data (404, "unknown" badge, or unparseable SVG), or `Err` on
+    /// network/transport failures.
+    async fn try_branch_coverage(
+        &self,
+        repo_spec: &RepoSpec,
+        branch: &str,
+    ) -> Result<Option<f64>> {
+        let owner = repo_spec.owner();
+        let repo = repo_spec.repo();
+        let codecov_url = format!("{}/gh/{owner}/{repo}/branch/{branch}/graph/badge.svg", self.base_url);
+        log::debug!(target: LOG_TARGET, "Trying branch '{branch}' for repository '{repo_spec}'");
+
+        let response = crate::facts::resilient_http::resilient_get(&self.client, &codecov_url)
+            .await
+            .into_app_err_with(|| format!("sending HTTP request to {codecov_url}"))?;
+
+        let status = response.status();
+        if status.is_client_error() {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            return Err(ohno::app_err!("unexpected HTTP status {status} from {codecov_url}"));
+        }
+
+        let text = response
+            .text()
+            .await
+            .into_app_err("reading codecov response body")?;
+
+        log::debug!(target: LOG_TARGET, "Codecov SVG length: {} bytes", text.len());
+
+        // codecov returns a 200 with "unknown" in the SVG when no coverage data is available
+        if text.contains(">unknown<") {
+            log::debug!(target: LOG_TARGET, "Codecov badge shows 'unknown' for branch '{branch}' - no coverage data available");
+            return Ok(None);
+        }
+
+        // Look for coverage percentage in the SVG
+        if let Some(captures) = PERCENT_REGEX.captures(&text)
+            && let Some(percent_str) = captures.get(1)
+        {
+            let percent_str = percent_str.as_str();
+
+            let coverage = match percent_str.parse::<f64>() {
+                Ok(v) => v,
+                Err(e) => {
+                    log::debug!(target: LOG_TARGET, "Could not parse coverage percentage '{percent_str}': {e:#}");
+                    return Ok(None);
+                }
+            };
+
+            log::debug!(target: LOG_TARGET, "Found coverage: {coverage}%");
+            return Ok(Some(coverage));
+        }
+
+        log::debug!(target: LOG_TARGET, "No percentage found in codecov SVG for branch '{branch}'");
+        Ok(None)
+    }
 }

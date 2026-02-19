@@ -62,7 +62,7 @@ async fn test_deps_command_all_report_types() {
     let excel_path = temp_dir.path().join("report.xlsx");
 
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         [
             "cargo",
@@ -85,7 +85,7 @@ async fn test_deps_command_all_report_types() {
     )
     .await;
 
-    assert!(result.is_ok(), "deps command failed: {result:?}");
+    assert!(host.error_str().is_empty(), "deps command failed: {}", host.error_str());
 
     // JSON report
     assert!(json_path.exists(), "JSON report should be created");
@@ -135,7 +135,7 @@ async fn test_deps_command_all_report_types() {
 #[cfg_attr(miri, ignore = "Miri cannot call mkdir")]
 async fn test_deps_command_console_output() {
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         [
             "cargo",
@@ -150,7 +150,7 @@ async fn test_deps_command_console_output() {
     )
     .await;
 
-    assert!(result.is_ok(), "deps command failed: {result:?}");
+    assert!(host.error_str().is_empty(), "deps command failed: {}", host.error_str());
 
     let output = host.output_str();
     assert!(output.contains("itoa"), "console output should mention itoa");
@@ -164,7 +164,7 @@ async fn test_deps_command_csv_output() {
     let csv_path = temp_dir.path().join("report.csv");
 
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         [
             "cargo",
@@ -180,7 +180,7 @@ async fn test_deps_command_csv_output() {
     )
     .await;
 
-    assert!(result.is_ok(), "deps command failed: {result:?}");
+    assert!(host.error_str().is_empty(), "deps command failed: {}", host.error_str());
     assert!(csv_path.exists(), "CSV report should be created");
 
     let csv_content = std::fs::read_to_string(&csv_path).expect("read CSV");
@@ -197,7 +197,7 @@ async fn test_deps_command_standard_deps_only() {
     let json_path = temp_dir.path().join("report.json");
 
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         [
             "cargo",
@@ -215,7 +215,7 @@ async fn test_deps_command_standard_deps_only() {
     )
     .await;
 
-    assert!(result.is_ok(), "deps command failed: {result:?}");
+    assert!(host.error_str().is_empty(), "deps command failed: {}", host.error_str());
 
     let json_content = std::fs::read_to_string(&json_path).expect("read JSON");
     let parsed: serde_json::Value = serde_json::from_str(&json_content).expect("valid JSON");
@@ -237,7 +237,7 @@ async fn test_deps_command_dev_deps_only() {
     let json_path = temp_dir.path().join("report.json");
 
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         [
             "cargo",
@@ -255,7 +255,7 @@ async fn test_deps_command_dev_deps_only() {
     )
     .await;
 
-    assert!(result.is_ok(), "deps command failed: {result:?}");
+    assert!(host.error_str().is_empty(), "deps command failed: {}", host.error_str());
 
     let json_content = std::fs::read_to_string(&json_path).expect("read JSON");
     let parsed: serde_json::Value = serde_json::from_str(&json_content).expect("valid JSON");
@@ -273,7 +273,7 @@ async fn test_deps_command_dev_deps_only() {
 #[cfg_attr(miri, ignore = "Miri cannot call mkdir")]
 async fn test_deps_command_nonexistent_package() {
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         [
             "cargo",
@@ -290,11 +290,12 @@ async fn test_deps_command_nonexistent_package() {
     )
     .await;
 
-    assert!(result.is_err(), "should fail for nonexistent package");
     let err_msg = host.error_str();
-    let result_msg = format!("{}", result.unwrap_err());
-    let has_error = err_msg.contains("no-such-package") || result_msg.contains("no-such-package");
-    assert!(has_error, "error should mention the package name");
+    assert!(!err_msg.is_empty(), "should fail for nonexistent package");
+    assert!(
+        err_msg.contains("no-such-package"),
+        "error should mention the package name, got: {err_msg}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -308,7 +309,7 @@ async fn test_deps_command_with_package_flag() {
     let json_path = temp_dir.path().join("report.json");
 
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         [
             "cargo",
@@ -326,7 +327,11 @@ async fn test_deps_command_with_package_flag() {
     )
     .await;
 
-    assert!(result.is_ok(), "deps --package tiny-crate should succeed: {result:?}");
+    assert!(
+        host.error_str().is_empty(),
+        "deps --package tiny-crate should succeed: {}",
+        host.error_str()
+    );
 
     let json_content = std::fs::read_to_string(&json_path).expect("read JSON");
     let parsed: serde_json::Value = serde_json::from_str(&json_content).expect("valid JSON");
@@ -346,7 +351,7 @@ async fn test_deps_command_with_workspace_flag() {
     let json_path = temp_dir.path().join("report.json");
 
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         [
             "cargo",
@@ -363,7 +368,7 @@ async fn test_deps_command_with_workspace_flag() {
     )
     .await;
 
-    assert!(result.is_ok(), "deps --workspace should succeed: {result:?}");
+    assert!(host.error_str().is_empty(), "deps --workspace should succeed: {}", host.error_str());
 
     let json_content = std::fs::read_to_string(&json_path).expect("read JSON");
     let parsed: serde_json::Value = serde_json::from_str(&json_content).expect("valid JSON");
@@ -386,7 +391,7 @@ async fn test_deps_command_virtual_workspace() {
     let json_path = temp_dir.path().join("report.json");
 
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         [
             "cargo",
@@ -402,7 +407,11 @@ async fn test_deps_command_virtual_workspace() {
     )
     .await;
 
-    assert!(result.is_ok(), "deps on virtual workspace should succeed: {result:?}");
+    assert!(
+        host.error_str().is_empty(),
+        "deps on virtual workspace should succeed: {}",
+        host.error_str()
+    );
 
     let json_content = std::fs::read_to_string(&json_path).expect("read JSON");
     let parsed: serde_json::Value = serde_json::from_str(&json_content).expect("valid JSON");
@@ -424,7 +433,7 @@ async fn test_deps_command_all_features() {
     let json_path = temp_dir.path().join("report.json");
 
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         [
             "cargo",
@@ -441,7 +450,11 @@ async fn test_deps_command_all_features() {
     )
     .await;
 
-    assert!(result.is_ok(), "deps --all-features should succeed: {result:?}");
+    assert!(
+        host.error_str().is_empty(),
+        "deps --all-features should succeed: {}",
+        host.error_str()
+    );
 
     let json_content = std::fs::read_to_string(&json_path).expect("read JSON");
     let parsed: serde_json::Value = serde_json::from_str(&json_content).expect("valid JSON");
@@ -465,7 +478,7 @@ async fn test_deps_command_no_default_features() {
     let json_path = temp_dir.path().join("report.json");
 
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         [
             "cargo",
@@ -482,7 +495,11 @@ async fn test_deps_command_no_default_features() {
     )
     .await;
 
-    assert!(result.is_ok(), "deps --no-default-features should succeed: {result:?}");
+    assert!(
+        host.error_str().is_empty(),
+        "deps --no-default-features should succeed: {}",
+        host.error_str()
+    );
 
     let json_content = std::fs::read_to_string(&json_path).expect("read JSON");
     let parsed: serde_json::Value = serde_json::from_str(&json_content).expect("valid JSON");
@@ -509,7 +526,7 @@ async fn test_deps_command_explicit_features() {
     let json_path = temp_dir.path().join("report.json");
 
     let mut host = TestHost::new();
-    let result = cargo_aprz_lib::run(
+    cargo_aprz_lib::run(
         &mut host,
         [
             "cargo",
@@ -528,7 +545,7 @@ async fn test_deps_command_explicit_features() {
     )
     .await;
 
-    assert!(result.is_ok(), "deps -F extra should succeed: {result:?}");
+    assert!(host.error_str().is_empty(), "deps -F extra should succeed: {}", host.error_str());
 
     let json_content = std::fs::read_to_string(&json_path).expect("read JSON");
     let parsed: serde_json::Value = serde_json::from_str(&json_content).expect("valid JSON");

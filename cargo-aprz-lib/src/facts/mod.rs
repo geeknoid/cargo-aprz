@@ -26,12 +26,7 @@
 pub mod advisories;
 #[cfg(not(debug_assertions))]
 pub(crate) mod advisories;
-#[cfg(debug_assertions)]
-pub mod cache_doc;
-#[cfg(not(debug_assertions))]
-pub(crate) mod cache_doc;
-#[cfg(debug_assertions)]
-pub use cache_doc::{CacheEnvelope, EnvelopePayload};
+pub mod cache;
 mod cache_lock;
 pub(crate) mod codebase;
 mod collector;
@@ -48,6 +43,7 @@ mod provider_result;
 pub(crate) mod resilient_http;
 mod repo_spec;
 mod request_tracker;
+pub(crate) mod throttler;
 
 pub use collector::Collector;
 pub use crate_facts::CrateFacts;
