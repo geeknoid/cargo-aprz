@@ -835,4 +835,192 @@ mod tests {
         .unwrap();
         assert_eq!(provider.hosts.len(), 2);
     }
+
+    #[test]
+    fn test_compute_age_stats_filters_nan_and_negative() {
+        let stats = compute_age_stats([f64::NAN, f64::INFINITY, -100.0, 86400.0].into_iter());
+        // Only 86400.0 (1 day) should be counted
+        assert_eq!(stats.avg, 1);
+        assert_eq!(stats.p50, 1);
+    }
+
+    #[test]
+    fn test_closed_age_seconds_with_closed_at() {
+        let created = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z").unwrap().to_utc();
+        let closed = DateTime::parse_from_rfc3339("2024-01-02T00:00:00Z").unwrap().to_utc();
+        let issue = Issue {
+            created_at: created,
+            closed_at: Some(closed),
+            state: IssueState::Closed,
+            pull_request: None,
+        };
+        let age = closed_age_seconds(&issue).unwrap();
+        assert!((age - 86400.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_closed_age_seconds_without_closed_at() {
+        let created = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z").unwrap().to_utc();
+        let issue = Issue {
+            created_at: created,
+            closed_at: None,
+            state: IssueState::Open,
+            pull_request: None,
+        };
+        assert!(closed_age_seconds(&issue).is_none());
+    }
+
+    #[test]
+    fn test_merged_pr_age_seconds_merged() {
+        use super::super::client::PullRequestMarker;
+        let created = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z").unwrap().to_utc();
+        let merged = DateTime::parse_from_rfc3339("2024-01-03T00:00:00Z").unwrap().to_utc();
+        let issue = Issue {
+            created_at: created,
+            closed_at: Some(merged),
+            state: IssueState::Closed,
+            pull_request: Some(PullRequestMarker { merged_at: Some(merged) }),
+        };
+        let age = merged_pr_age_seconds(&issue).unwrap();
+        assert!((age - 172_800.0).abs() < 1.0); // 2 days
+    }
+
+    #[test]
+    fn test_merged_pr_age_seconds_not_merged() {
+        use super::super::client::PullRequestMarker;
+        let created = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z").unwrap().to_utc();
+        let issue = Issue {
+            created_at: created,
+            closed_at: None,
+            state: IssueState::Open,
+            pull_request: Some(PullRequestMarker { merged_at: None }),
+        };
+        assert!(merged_pr_age_seconds(&issue).is_none());
+    }
+
+    #[test]
+    fn test_merged_pr_age_seconds_not_a_pr() {
+        let created = DateTime::parse_from_rfc3339("2024-01-01T00:00:00Z").unwrap().to_utc();
+        let issue = Issue {
+            created_at: created,
+            closed_at: None,
+            state: IssueState::Open,
+            pull_request: None,
+        };
+        assert!(merged_pr_age_seconds(&issue).is_none());
+    }
+
+    #[test]
+    fn test_increment_window_recent() {
+        let now = Utc::now();
+        let cutoff_90 = now - chrono::Duration::days(90);
+        let cutoff_180 = now - chrono::Duration::days(180);
+        let cutoff_365 = now - chrono::Duration::days(365);
+
+        let mut stats = TimeWindowStats::default();
+        // Timestamp within last 90 days
+        increment_window(&mut stats, now - chrono::Duration::days(10), cutoff_90, cutoff_180, cutoff_365);
+        assert_eq!(stats.total, 1);
+        assert_eq!(stats.last_90_days, 1);
+        assert_eq!(stats.last_180_days, 1);
+        assert_eq!(stats.last_365_days, 1);
+    }
+
+    #[test]
+    fn test_increment_window_old() {
+        let now = Utc::now();
+        let cutoff_90 = now - chrono::Duration::days(90);
+        let cutoff_180 = now - chrono::Duration::days(180);
+        let cutoff_365 = now - chrono::Duration::days(365);
+
+        let mut stats = TimeWindowStats::default();
+        // Timestamp between 180 and 365 days ago
+        increment_window(&mut stats, now - chrono::Duration::days(200), cutoff_90, cutoff_180, cutoff_365);
+        assert_eq!(stats.total, 1);
+        assert_eq!(stats.last_90_days, 0);
+        assert_eq!(stats.last_180_days, 0);
+        assert_eq!(stats.last_365_days, 1);
+    }
+
+    #[test]
+    fn test_increment_window_very_old() {
+        let now = Utc::now();
+        let cutoff_90 = now - chrono::Duration::days(90);
+        let cutoff_180 = now - chrono::Duration::days(180);
+        let cutoff_365 = now - chrono::Duration::days(365);
+
+        let mut stats = TimeWindowStats::default();
+        // Timestamp older than 365 days
+        increment_window(&mut stats, now - chrono::Duration::days(400), cutoff_90, cutoff_180, cutoff_365);
+        assert_eq!(stats.total, 1);
+        assert_eq!(stats.last_90_days, 0);
+        assert_eq!(stats.last_180_days, 0);
+        assert_eq!(stats.last_365_days, 0);
+    }
+
+    #[test]
+    fn test_compute_all_stats_empty() {
+        let now = Utc::now();
+        let stats = compute_all_stats(&[], now);
+        assert_eq!(stats.open_issues, 0);
+        assert_eq!(stats.open_prs, 0);
+        assert_eq!(stats.issues_opened.total, 0);
+        assert_eq!(stats.prs_opened.total, 0);
+    }
+
+    #[test]
+    fn test_compute_all_stats_mixed_issues_and_prs() {
+        use super::super::client::PullRequestMarker;
+        let now = Utc::now();
+        let day_ago = now - chrono::Duration::days(1);
+        let week_ago = now - chrono::Duration::days(7);
+        let two_days_ago = now - chrono::Duration::days(2);
+
+        let issues = vec![
+            // Open issue
+            Issue {
+                created_at: week_ago,
+                closed_at: None,
+                state: IssueState::Open,
+                pull_request: None,
+            },
+            // Closed issue
+            Issue {
+                created_at: week_ago,
+                closed_at: Some(day_ago),
+                state: IssueState::Closed,
+                pull_request: None,
+            },
+            // Open PR
+            Issue {
+                created_at: two_days_ago,
+                closed_at: None,
+                state: IssueState::Open,
+                pull_request: Some(PullRequestMarker { merged_at: None }),
+            },
+            // Merged PR
+            Issue {
+                created_at: week_ago,
+                closed_at: Some(two_days_ago),
+                state: IssueState::Closed,
+                pull_request: Some(PullRequestMarker { merged_at: Some(two_days_ago) }),
+            },
+        ];
+
+        let stats = compute_all_stats(&issues, now);
+        assert_eq!(stats.open_issues, 1);
+        assert_eq!(stats.open_prs, 1);
+        assert_eq!(stats.issues_opened.total, 2);
+        assert_eq!(stats.issues_closed.total, 1);
+        assert_eq!(stats.prs_opened.total, 2);
+        assert_eq!(stats.prs_merged.total, 1);
+        assert_eq!(stats.prs_closed.total, 1);
+    }
+
+    #[test]
+    fn test_percentile_boundary_values() {
+        let data = vec![1.0, 2.0, 3.0];
+        assert!((percentile(&data, 0.0) - 1.0).abs() < f64::EPSILON);
+        assert!((percentile(&data, 100.0) - 3.0).abs() < f64::EPSILON);
+    }
 }

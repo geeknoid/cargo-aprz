@@ -329,4 +329,65 @@ mod tests {
         assert_eq!(completed1, 1);
         assert_eq!(completed2, 1);
     }
+
+    #[test]
+    fn test_println_delegates_to_progress() {
+        use std::sync::Mutex;
+
+        #[derive(Debug)]
+        struct RecordingProgress {
+            messages: Mutex<Vec<String>>,
+        }
+
+        impl Progress for RecordingProgress {
+            fn set_phase(&self, _phase: &str) {}
+            fn set_determinate(&self, _callback: Box<dyn Fn() -> (u64, u64, String) + Send + Sync + 'static>) {}
+            fn set_indeterminate(&self, _callback: Box<dyn Fn() -> String + Send + Sync + 'static>) {}
+            fn println(&self, msg: &str) {
+                self.messages.lock().unwrap().push(msg.to_string());
+            }
+            fn done(&self) {}
+        }
+
+        let progress = Arc::new(RecordingProgress {
+            messages: Mutex::new(Vec::new()),
+        });
+        let tracker = RequestTracker::new(&(Arc::clone(&progress) as Arc<dyn Progress>));
+
+        tracker.println("hello");
+        tracker.println("world");
+
+        let messages = progress.messages.lock().unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0], "hello");
+        assert_eq!(messages[1], "world");
+        drop(messages);
+    }
+
+    #[test]
+    fn test_debug_impl() {
+        let tracker = test_tracker();
+        let debug_str = format!("{tracker:?}");
+        assert!(debug_str.contains("RequestTracker"));
+        assert!(debug_str.contains("counters"));
+        assert!(debug_str.contains("<dyn Progress>"));
+    }
+
+    #[test]
+    fn test_tracked_topic_ordering() {
+        assert!(TrackedTopic::Coverage < TrackedTopic::Docs);
+        assert!(TrackedTopic::Docs < TrackedTopic::Repos);
+        assert!(TrackedTopic::Repos < TrackedTopic::Codebase);
+    }
+
+    #[test]
+    fn test_add_requests_large_count() {
+        let tracker = test_tracker();
+        tracker.add_requests(TrackedTopic::Coverage, 1_000_000);
+
+        let (total, completed, message) = RequestTracker::progress_reporter_callback(&tracker.counters);
+        assert_eq!(total, 1_000_000);
+        assert_eq!(completed, 0);
+        assert!(message.contains("0/1000000 coverage"));
+    }
 }

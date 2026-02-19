@@ -13,7 +13,7 @@ use strum::{Display, EnumString};
 #[value(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 pub enum DependencyType {
-    /// Regular production depenedencies
+    /// Regular production dependencies
     Standard,
 
     /// Development-only dependencies
