@@ -6,7 +6,7 @@ use crate::facts::RepoSpec;
 use crate::facts::cache::{Cache, CacheResult};
 use crate::facts::crate_spec::{self, CrateSpec};
 use crate::facts::path_utils::sanitize_path_component;
-use crate::facts::request_tracker::{RequestTracker, TrackedTopic};
+use crate::facts::request_tracker::{RequestTracker, TopicStatus, TrackedTopic};
 use crate::facts::throttler::Throttler;
 use chrono::{DateTime, Utc};
 use compact_str::CompactString;
@@ -277,21 +277,58 @@ impl Provider {
             let _permit = self.throttler.acquire().await;
             let result = self.fetch_hosting_data_for_repo(client, host, repo_spec.clone()).await;
 
+            if let Some(rl) = &result.rate_limit {
+                log::debug!(
+                    target: LOG_TARGET,
+                    "{} API rate limit for '{repo_spec}': {} remaining, resets at {}",
+                    host.display_name,
+                    rl.remaining,
+                    rl.reset_at.with_timezone(&chrono::Local).format("%T")
+                );
+            }
+
             if result.is_rate_limited {
                 if let Some(rate_limit) = result.rate_limit {
                     let reset_time = rate_limit.reset_at;
                     let wait_until = reset_time.min(self.cache.now() + chrono::Duration::seconds(MAX_RATE_LIMIT_WAIT_SECS.cast_signed()));
 
                     if wait_until > self.cache.now() {
-                        let formatted_time = wait_until.with_timezone(&chrono::Local).format("%T");
-                        log::warn!(target: LOG_TARGET, "Hit {} rate limit for repository '{repo_spec}'", host.display_name);
-                        tracker.println(&format!(
-                            "{} rate limit exceeded: Waiting until {formatted_time}...",
-                            host.display_name
-                        ));
-
                         let wait_duration = (wait_until - self.cache.now()).to_std().unwrap_or(Duration::ZERO);
-                        self.throttler.pause_for(wait_duration);
+                        if self.throttler.pause_for(wait_duration) {
+                            tracker.set_topic_status(TrackedTopic::Repos, TopicStatus::Blocked);
+                            let formatted_time = wait_until.with_timezone(&chrono::Local).format("%T").to_string();
+                            log::warn!(target: LOG_TARGET, "Hit {} rate limit for repository '{repo_spec}'", host.display_name);
+                            tracker.println(&format!(
+                                "{} rate limit exceeded: Waiting until {formatted_time}...",
+                                host.display_name
+                            ));
+
+                            let throttler = Arc::clone(&self.throttler);
+                            let tracker = tracker.clone();
+                            let display_name = host.display_name;
+                            drop(tokio::spawn(async move {
+                                loop {
+                                    tokio::time::sleep(Duration::from_secs(60)).await;
+                                    if !throttler.is_paused() {
+                                        tracker.set_topic_status(TrackedTopic::Repos, TopicStatus::Active);
+                                        log::info!(target: LOG_TARGET, "{display_name} rate limit lifted, resuming requests");
+                                        tracker.println(&format!("{display_name} rate limit lifted, resuming requests"));
+                                        break;
+                                    }
+                                    let remaining = wait_until - Utc::now();
+                                    let remaining_mins = remaining.num_minutes();
+                                    if remaining_mins > 0 {
+                                        log::info!(
+                                            target: LOG_TARGET,
+                                            "{display_name} rate limit: ~{remaining_mins} minute(s) remaining until {formatted_time}"
+                                        );
+                                        tracker.println(&format!(
+                                            "{display_name} rate limit: ~{remaining_mins} minute(s) remaining until {formatted_time}"
+                                        ));
+                                    }
+                                }
+                            }));
+                        }
                     }
                 }
                 continue;
@@ -314,15 +351,38 @@ impl Provider {
             CacheResult::Miss => {}
         }
 
+        // If the throttler is paused due to a rate limit detected by another task,
+        // skip HTTP calls and signal rate-limited so the caller retries after the pause.
+        if self.throttler.is_paused() {
+            return RepoData {
+                repo_spec,
+                result: ProviderResult::Error(Arc::new(ohno::app_err!("rate limited"))),
+                rate_limit: None,
+                is_rate_limited: true,
+            };
+        }
+
         log::info!(target: LOG_TARGET, "Querying {} for information on repository '{repo_spec}'", host.display_name);
 
-        let (repo_res, issues_res) = tokio::join!(
-            self.get_repo_info(client, owner, repo),
-            self.get_issues_and_pulls(client, owner, repo)
-        );
+        // Run requests sequentially so each throttler permit produces at most one
+        // concurrent HTTP request, keeping actual in-flight calls within
+        // MAX_CONCURRENT_REQUESTS.
+        let repo_res = self.get_repo_info(client, owner, repo).await;
 
         // Check for rate limiting or permanent failures in each result
         let (repo_data, repo_rate_limit) = unwrap_repo_result!(repo_res, repo_spec, "core info", self.cache, &filename);
+
+        // Bail if another task paused the throttler while we were fetching repo info
+        if self.throttler.is_paused() {
+            return RepoData {
+                repo_spec,
+                result: ProviderResult::Error(Arc::new(ohno::app_err!("rate limited"))),
+                rate_limit: repo_rate_limit,
+                is_rate_limited: true,
+            };
+        }
+
+        let issues_res = self.get_issues_and_pulls(client, owner, repo).await;
         let (issue_pull_stats, issues_rate_limit) = unwrap_repo_result!(issues_res, repo_spec, "issues and pull request info", self.cache, &filename, "issues/PRs");
 
         // Use the most conservative rate limit info (the one with the least remaining quota)
@@ -435,6 +495,14 @@ impl Provider {
 
             if !has_next_page {
                 break;
+            }
+
+            // Stop paginating if another task detected a rate limit
+            if self.throttler.is_paused() {
+                return HostingApiResult::RateLimited(latest_rate_limit.unwrap_or_else(|| RateLimitInfo {
+                    remaining: 0,
+                    reset_at: self.cache.now() + chrono::Duration::hours(1),
+                }));
             }
 
             page_num += 1;

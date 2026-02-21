@@ -342,7 +342,7 @@ mod tests {
 
     /// Create a temp git repository with a few commits for testing.
     /// Returns the tempdir (must be kept alive) and the repo path.
-    async fn create_test_repo() -> (tempfile::TempDir, std::path::PathBuf) {
+    fn create_test_repo() -> (tempfile::TempDir, std::path::PathBuf) {
         let tmp = tempfile::tempdir().expect("create temp dir");
         let repo_path = tmp.path().join("test-repo");
         fs::create_dir_all(&repo_path).expect("create repo dir");
@@ -431,7 +431,7 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(miri, ignore = "Miri cannot run external commands")]
     async fn test_count_contributors() {
-        let (_tmp, repo_path) = create_test_repo().await;
+        let (_tmp, repo_path) = create_test_repo();
         let count = count_contributors(&repo_path).await.unwrap();
         assert_eq!(count, 1); // Single test user
     }
@@ -442,13 +442,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         // Not a git repo - shortlog should fail
         let result = count_contributors(tmp.path()).await;
-        assert!(result.is_err());
+        let _ = result.unwrap_err();
     }
 
     #[tokio::test]
     #[cfg_attr(miri, ignore = "Miri cannot run external commands")]
     async fn test_get_commit_stats_basic() {
-        let (_tmp, repo_path) = create_test_repo().await;
+        let (_tmp, repo_path) = create_test_repo();
         let stats = get_commit_stats(&repo_path, &[30, 365]).await.unwrap();
         assert_eq!(stats.commit_count, 2);
         assert!(stats.first_commit_at <= stats.last_commit_at);
@@ -461,7 +461,7 @@ mod tests {
     #[tokio::test]
     #[cfg_attr(miri, ignore = "Miri cannot run external commands")]
     async fn test_get_commit_stats_empty_windows() {
-        let (_tmp, repo_path) = create_test_repo().await;
+        let (_tmp, repo_path) = create_test_repo();
         let stats = get_commit_stats(&repo_path, &[]).await.unwrap();
         assert_eq!(stats.commit_count, 2);
         assert!(stats.commits_per_window.is_empty());
@@ -520,9 +520,9 @@ mod tests {
         let bad_url = Url::from_file_path(tmp.path().join("nonexistent.git")).unwrap();
         // Cloning a non-existent local path either returns NotFound or an error,
         // depending on the exact git error message. Either way, it should not succeed.
-        match get_repo(&clone_path, &bad_url).await {
-            Ok(status) => assert!(matches!(status, RepoStatus::NotFound)),
-            Err(_) => {} // Also acceptable — git error message didn't match not-found patterns
+        if let Ok(status) = get_repo(&clone_path, &bad_url).await {
+            assert!(matches!(status, RepoStatus::NotFound));
         }
+        // Also acceptable — git error message didn't match not-found patterns
     }
 }

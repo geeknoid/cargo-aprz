@@ -186,7 +186,16 @@ impl<'a, H: super::Host> Common<'a, H> {
             Duration::from_hours(365 * 24)
         };
 
-        let progress_reporter = ProgressReporter::new(delay);
+        let use_colors_for_progress = match args.color {
+            ColorMode::Always => true,
+            ColorMode::Never => false,
+            ColorMode::Auto => {
+                use std::io::{IsTerminal, stderr};
+                stderr().is_terminal()
+            }
+        };
+
+        let progress_reporter = ProgressReporter::new(delay, use_colors_for_progress);
 
         let collector = Collector::new(
             args.github_token.as_deref(),
