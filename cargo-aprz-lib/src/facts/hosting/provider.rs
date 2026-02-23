@@ -471,8 +471,10 @@ impl Provider {
         let mut all_issues = Vec::with_capacity(ISSUE_PAGE_SIZE as usize);
         let mut latest_rate_limit: Option<RateLimitInfo> = None;
         let mut page_num = 1u32;
+        let mut request_count = 0u32;
 
         loop {
+            request_count += 1;
             let url = format!(
                 "{}/repos/{owner}/{repo}/issues?state=all&since={since_str}&per_page={ISSUE_PAGE_SIZE}&page={page_num}",
                 client.base_url()
@@ -522,7 +524,7 @@ impl Provider {
         }
 
         let mut stats = compute_all_stats(&all_issues, Utc::now());
-        stats.request_count = page_num;
+        stats.request_count = request_count;
 
         HostingApiResult::Success(stats, latest_rate_limit)
     }
