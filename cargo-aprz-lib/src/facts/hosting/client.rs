@@ -6,6 +6,8 @@ use chrono::{DateTime, Utc};
 use reqwest::header::HeaderMap;
 use serde::Deserialize;
 
+const LOG_TARGET: &str = "   hosting";
+
 #[derive(Debug, Deserialize)]
 #[expect(clippy::struct_field_names, reason = "field names match GitHub API exactly")]
 pub struct Repository {
@@ -71,12 +73,11 @@ pub enum HostingApiResult<T> {
 pub struct Client {
     client: reqwest::Client,
     base_url: String,
-    now: DateTime<Utc>,
 }
 
 impl Client {
     /// Create a new hosting API client with optional authentication token and base URL
-    pub fn new(token: Option<&str>, base_url: impl Into<String>, now: DateTime<Utc>) -> crate::Result<Self> {
+    pub fn new(token: Option<&str>, base_url: impl Into<String>) -> crate::Result<Self> {
         use reqwest::header::{AUTHORIZATION, HeaderValue};
 
         let mut client_builder = reqwest::Client::builder().user_agent("cargo-aprz");
@@ -94,7 +95,6 @@ impl Client {
         Ok(Self {
             client: client_builder.build()?,
             base_url: base_url.into(),
-            now,
         })
     }
 
@@ -116,6 +116,8 @@ impl Client {
 
         // Check status code
         let status = resp.status();
+        log::debug!(target: LOG_TARGET, "HTTP {status} for {url}");
+
         if status.is_success() {
             return HostingApiResult::Success(resp, rate_limit);
         }
@@ -123,20 +125,51 @@ impl Client {
         // Check for rate limiting (403 or 429)
         let status_code = status.as_u16();
         if matches!(status_code, 403 | 429) {
-            // Rate limited - use rate limit info from headers or default to 1 hour retry
-            let rate_limit = rate_limit.unwrap_or_else(|| RateLimitInfo {
-                remaining: 0,
-                reset_at: self.now + chrono::Duration::hours(1),
-            });
-            return HostingApiResult::RateLimited(rate_limit);
+            // Extract Retry-After header (used by GitHub for secondary/abuse rate limits)
+            let retry_after_secs = resp
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| s.parse::<i64>().ok());
+
+            // Check if the primary rate limit is exhausted (remaining == 0 or no headers)
+            let is_primary_rate_limit = rate_limit.as_ref().is_none_or(|rl| rl.remaining == 0);
+
+            if is_primary_rate_limit {
+                log::warn!(target: LOG_TARGET, "Primary rate limit exhausted (HTTP {status_code}) for {url}");
+                // Primary rate limit exhausted — wait until the rate limit window resets
+                let rate_limit = rate_limit.unwrap_or_else(|| RateLimitInfo {
+                    remaining: 0,
+                    reset_at: Utc::now() + chrono::Duration::hours(1),
+                });
+                return HostingApiResult::RateLimited(rate_limit);
+            }
+
+            // Secondary rate limit or other 403 — primary quota is NOT exhausted
+            if let Some(secs) = retry_after_secs {
+                log::warn!(target: LOG_TARGET, "Secondary rate limit (HTTP {status_code}, Retry-After: {secs}s) for {url}");
+                // Secondary rate limit with Retry-After header — short wait
+                return HostingApiResult::RateLimited(RateLimitInfo {
+                    remaining: 0,
+                    reset_at: Utc::now() + chrono::Duration::seconds(secs),
+                });
+            }
+
+            // 403 with remaining > 0 and no Retry-After — not a rate limit
+            // (e.g., repo is private, DMCA takedown, insufficient permissions)
+            log::warn!(target: LOG_TARGET, "HTTP {status_code} (not rate-limited, remaining: {}) for {url}", rate_limit.map_or(0, |rl| rl.remaining));
+            let error = resp.error_for_status().expect_err("status is not successful at this point");
+            return HostingApiResult::Failed(error.into(), rate_limit);
         }
 
         // Check for not found (404)
         if status_code == 404 {
+            log::debug!(target: LOG_TARGET, "HTTP 404 for {url}");
             return HostingApiResult::NotFound(rate_limit);
         }
 
         // Any other HTTP error is a permanent failure
+        log::warn!(target: LOG_TARGET, "HTTP {status_code} for {url}");
         let error = resp.error_for_status().expect_err("status is not successful at this point");
         HostingApiResult::Failed(error.into(), rate_limit)
     }
@@ -308,23 +341,20 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "Miri cannot call GetSystemTimePreciseAsFileTime")]
     fn test_client_new_without_token() {
-        let client = Client::new(None, "https://api.github.com", Utc::now()).unwrap();
+        let client = Client::new(None, "https://api.github.com").unwrap();
         assert_eq!(client.base_url(), "https://api.github.com");
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "Miri cannot call GetSystemTimePreciseAsFileTime")]
     fn test_client_new_with_token() {
-        let client = Client::new(Some("test_token"), "https://api.github.com", Utc::now()).unwrap();
+        let client = Client::new(Some("test_token"), "https://api.github.com").unwrap();
         assert_eq!(client.base_url(), "https://api.github.com");
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "Miri cannot call GetSystemTimePreciseAsFileTime")]
     fn test_client_base_url() {
-        let client = Client::new(None, "https://codeberg.org/api/v1", Utc::now()).unwrap();
+        let client = Client::new(None, "https://codeberg.org/api/v1").unwrap();
         assert_eq!(client.base_url(), "https://codeberg.org/api/v1");
     }
 

@@ -37,6 +37,20 @@ fn should_retry_response(result: &crate::Result<reqwest::Response>) -> RecoveryI
             RecoveryInfo::retry().delay(Duration::from_secs(5))
         }
 
+        // Secondary rate limit (403 with Retry-After) – wait the requested duration and retry.
+        Ok(resp) if resp.status() == reqwest::StatusCode::FORBIDDEN => {
+            if let Some(delay) = resp
+                .headers()
+                .get(reqwest::header::RETRY_AFTER)
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok())
+            {
+                RecoveryInfo::retry().delay(Duration::from_secs(delay))
+            } else {
+                RecoveryInfo::never()
+            }
+        }
+
         // Everything else (success, 4xx client errors) is not retried.
         _ => RecoveryInfo::never(),
     }
