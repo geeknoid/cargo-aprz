@@ -130,7 +130,7 @@ impl Client {
                 .headers()
                 .get(reqwest::header::RETRY_AFTER)
                 .and_then(|h| h.to_str().ok())
-                .and_then(|s| s.parse::<i64>().ok());
+                .and_then(|s| s.parse::<u64>().ok());
 
             // Check if the primary rate limit is exhausted (remaining == 0 or no headers)
             let is_primary_rate_limit = rate_limit.as_ref().is_none_or(|rl| rl.remaining == 0);
@@ -151,7 +151,7 @@ impl Client {
                 // Secondary rate limit with Retry-After header — short wait
                 return HostingApiResult::RateLimited(RateLimitInfo {
                     remaining: 0,
-                    reset_at: Utc::now() + chrono::Duration::seconds(secs),
+                    reset_at: Utc::now() + chrono::Duration::seconds(secs.cast_signed()),
                 });
             }
 
