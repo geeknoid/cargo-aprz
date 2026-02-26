@@ -142,6 +142,9 @@ where
     let mut use_items = 0;
 
     let index_len = index.len();
+    // Normalize the crate name: crates.io uses hyphens (e.g., "pin-project-lite") but
+    // rustdoc JSON uses underscores (e.g., "pin_project_lite") for the root module name.
+    let normalized_crate_name = crate_spec.name().replace('-', "_");
     log::debug!(target: LOG_TARGET, "Starting to iterate through {index_len} items for {crate_spec}");
 
     for (id, item) in index {
@@ -173,7 +176,7 @@ where
             broken_doc_links += broken;
 
             if let Some(name) = item.name()
-                && name == crate_spec.name()
+                && name == normalized_crate_name
                 && id == root_id
             {
                 log::debug!(target: LOG_TARGET, "Found crate-level docs for {crate_spec} (root item name matches)");
@@ -324,4 +327,197 @@ trait ItemLike {
     fn name(&self) -> Option<&str>;
     fn docs(&self) -> Option<&str>;
     fn links(&self) -> &std::collections::HashMap<String, Self::Id>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::facts::CrateSpec;
+    use semver::Version;
+    use serde_json::json;
+    use std::sync::Arc;
+
+    /// Build a minimal valid rustdoc JSON v57 value.
+    ///
+    /// `root_module_name` is the name of the root module item (rustdoc always uses
+    /// underscores here, e.g. `"pin_project_lite"`).  Extra items can be injected
+    /// through `extra_items` (id, item-json pairs) — they are automatically added
+    /// to the root module's `items` array.
+    fn make_rustdoc_json(
+        root_module_name: &str,
+        root_docs: Option<&str>,
+        extra_items: &[(u32, serde_json::Value)],
+    ) -> serde_json::Value {
+        let extra_ids: Vec<u32> = extra_items.iter().map(|(id, _)| *id).collect();
+
+        let mut index = serde_json::Map::new();
+
+        // Root module (id 0)
+        let _ = index.insert(
+            "0".into(),
+            json!({
+                "id": 0,
+                "crate_id": 0,
+                "name": root_module_name,
+                "span": null,
+                "visibility": "public",
+                "docs": root_docs,
+                "links": {},
+                "attrs": [],
+                "deprecation": null,
+                "inner": {
+                    "module": {
+                        "is_crate": true,
+                        "items": extra_ids,
+                        "is_stripped": false
+                    }
+                }
+            }),
+        );
+
+        for (id, item_json) in extra_items {
+            let _ = index.insert(id.to_string(), item_json.clone());
+        }
+
+        json!({
+            "format_version": 57,
+            "root": 0,
+            "crate_version": "0.1.0",
+            "includes_private": false,
+            "index": index,
+            "paths": {
+                "0": { "crate_id": 0, "path": [root_module_name], "kind": "module" }
+            },
+            "external_crates": {},
+            "target": {
+                "triple": "x86_64-unknown-linux-gnu",
+                "target_features": []
+            }
+        })
+    }
+
+    /// Build a public struct item with the given name and optional docs.
+    fn make_public_struct(id: u32, name: &str, docs: Option<&str>) -> (u32, serde_json::Value) {
+        (
+            id,
+            json!({
+                "id": id,
+                "crate_id": 0,
+                "name": name,
+                "span": null,
+                "visibility": "public",
+                "docs": docs,
+                "links": {},
+                "attrs": [],
+                "deprecation": null,
+                "inner": {
+                    "struct": {
+                        "kind": { "plain": { "fields": [], "has_stripped_fields": false } },
+                        "generics": { "params": [], "where_predicates": [] },
+                        "impls": []
+                    }
+                }
+            }),
+        )
+    }
+
+    fn crate_spec(name: &str) -> CrateSpec {
+        CrateSpec::from_arcs(Arc::from(name), Arc::new(Version::new(0, 1, 0)))
+    }
+
+    // -----------------------------------------------------------------------
+    // Crate-level docs detection
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn crate_level_docs_detected_for_simple_name() {
+        let json = make_rustdoc_json("my_crate", Some("Top-level docs"), &[]);
+        let reader = serde_json::to_vec(&json).unwrap();
+
+        let data = calculate_docs_metrics(reader.as_slice(), &crate_spec("my_crate")).unwrap();
+        assert!(data.metrics.has_crate_level_docs);
+    }
+
+    #[test]
+    fn crate_level_docs_detected_when_name_has_hyphens() {
+        // The CrateSpec uses hyphens (crates.io convention) but rustdoc JSON
+        // uses underscores for the root module name.
+        let json = make_rustdoc_json("pin_project_lite", Some("A lightweight pin-project."), &[]);
+        let reader = serde_json::to_vec(&json).unwrap();
+
+        let data = calculate_docs_metrics(reader.as_slice(), &crate_spec("pin-project-lite")).unwrap();
+        assert!(
+            data.metrics.has_crate_level_docs,
+            "should detect crate-level docs even when crate name has hyphens"
+        );
+    }
+
+    #[test]
+    fn crate_level_docs_false_when_root_has_no_docs() {
+        let json = make_rustdoc_json("my_crate", None, &[]);
+        let reader = serde_json::to_vec(&json).unwrap();
+
+        let data = calculate_docs_metrics(reader.as_slice(), &crate_spec("my_crate")).unwrap();
+        assert!(!data.metrics.has_crate_level_docs);
+    }
+
+    #[test]
+    fn crate_level_docs_false_when_root_docs_are_empty() {
+        let json = make_rustdoc_json("my_crate", Some("   "), &[]);
+        let reader = serde_json::to_vec(&json).unwrap();
+
+        let data = calculate_docs_metrics(reader.as_slice(), &crate_spec("my_crate")).unwrap();
+        assert!(!data.metrics.has_crate_level_docs);
+    }
+
+    // -----------------------------------------------------------------------
+    // Documentation coverage
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn coverage_counts_public_items() {
+        let json = make_rustdoc_json(
+            "my_crate",
+            Some("Crate docs"),
+            &[
+                make_public_struct(1, "Documented", Some("Has docs.")),
+                make_public_struct(2, "Undocumented", None),
+            ],
+        );
+        let reader = serde_json::to_vec(&json).unwrap();
+
+        let data = calculate_docs_metrics(reader.as_slice(), &crate_spec("my_crate")).unwrap();
+        // 3 public items: root module + 2 structs
+        assert_eq!(data.metrics.public_api_elements, 3);
+        // 2 documented: root module + "Documented"
+        assert_eq!(data.metrics.undocumented_elements, 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // Examples in docs
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn counts_code_examples_in_docs() {
+        let docs_with_two_examples = "Some docs\n\n```rust\nlet x = 1;\n```\n\nMore text\n\n```\nlet y = 2;\n```\n";
+        let json = make_rustdoc_json("my_crate", Some(docs_with_two_examples), &[]);
+        let reader = serde_json::to_vec(&json).unwrap();
+
+        let data = calculate_docs_metrics(reader.as_slice(), &crate_spec("my_crate")).unwrap();
+        assert_eq!(data.metrics.examples_in_docs, 2);
+    }
+
+    #[test]
+    fn full_coverage_when_all_items_documented() {
+        let json = make_rustdoc_json(
+            "my_crate",
+            Some("Crate docs"),
+            &[make_public_struct(1, "Foo", Some("Foo docs"))],
+        );
+        let reader = serde_json::to_vec(&json).unwrap();
+
+        let data = calculate_docs_metrics(reader.as_slice(), &crate_spec("my_crate")).unwrap();
+        assert!((data.metrics.doc_coverage_percentage - 100.0).abs() < f64::EPSILON);
+        assert_eq!(data.metrics.undocumented_elements, 0);
+    }
 }
