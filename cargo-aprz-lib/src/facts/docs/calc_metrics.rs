@@ -142,6 +142,9 @@ where
     let mut use_items = 0;
 
     let index_len = index.len();
+    // Normalize the crate name: crates.io uses hyphens (e.g., "pin-project-lite") but
+    // rustdoc JSON uses underscores (e.g., "pin_project_lite") for the root module name.
+    let normalized_crate_name = crate_spec.name().replace('-', "_");
     log::debug!(target: LOG_TARGET, "Starting to iterate through {index_len} items for {crate_spec}");
 
     for (id, item) in index {
@@ -173,7 +176,7 @@ where
             broken_doc_links += broken;
 
             if let Some(name) = item.name()
-                && name == crate_spec.name()
+                && name == normalized_crate_name
                 && id == root_id
             {
                 log::debug!(target: LOG_TARGET, "Found crate-level docs for {crate_spec} (root item name matches)");
