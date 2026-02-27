@@ -35,10 +35,7 @@ expression = "current_vulnerabilities == 0"
         config.high_risk[0].description(),
         Some("Flag crates with critical vulnerabilities as high risk")
     );
-    assert_eq!(
-        config.high_risk[0].expression(),
-        "current_critical_severity_vulnerabilities > 0"
-    );
+    assert_eq!(config.high_risk[0].expression(), "current_critical_severity_vulnerabilities > 0");
 
     assert_eq!(config.high_risk[1].name(), "too_many_dependencies");
     assert_eq!(config.high_risk[1].description(), None);
