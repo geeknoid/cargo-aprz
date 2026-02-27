@@ -151,7 +151,6 @@ expression = "!stability.yanked"
 # ============================================================================
 # EVALUATION EXPRESSIONS
 # Each expression has a point value. Score = granted / total * 100.
-# Total budget: 100 points across all expressions.
 # ============================================================================
 
 # --- Crate Maturity (11 points) ---
