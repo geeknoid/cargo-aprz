@@ -1,5 +1,18 @@
 # cargo-aprz
 
+## 0.12.0 - 2026-02-28
+
+### Changed
+
+- Improved HTML report, much more user-friendly and visually appealing.
+
+- Improved default config.
+
+### Fixed
+
+- Handle crates with - in their names properly, things were getting
+  messed up since in certain cases the - is normalized to a _.
+
 ## 0.11.0 - 2026-02-24
 
 ### Fixed

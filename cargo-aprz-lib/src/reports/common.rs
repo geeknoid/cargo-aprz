@@ -35,6 +35,11 @@ pub fn write_metric_value(buf: &mut String, value: &MetricValue) {
     }
 }
 
+/// Check if a metric name is the crate name metric.
+pub fn is_crate_name_metric(metric_name: &str) -> bool {
+    metric_name == "crate.name"
+}
+
 /// Check if a string is a URL (starts with http:// or https://).
 pub fn is_url(s: &str) -> bool {
     s.starts_with("http://") || s.starts_with("https://")
