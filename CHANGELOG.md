@@ -1,5 +1,16 @@
 # cargo-aprz
 
+## 0.13.0 - 2026-03-01
+
+### Added
+
+- Added support for an allow list in configuration to bypass the --error-if-high-risk and
+  --error-if-medium-risk checks.
+
+### Changed
+
+- More improvements in HTML report rendering.
+
 ## 0.12.0 - 2026-02-28
 
 ### Changed
