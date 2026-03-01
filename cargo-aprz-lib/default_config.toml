@@ -48,6 +48,31 @@ coverage_cache_ttl = "1 week"
 advisories_cache_ttl = "1 week"
 
 # ----------------------------------------------------------------------------
+# Allow List
+#
+# Crates listed here are exempt from triggering error exit codes when using
+# --error-if-medium-risk or --error-if-high-risk. Each entry specifies a crate
+# name and a semver version requirement. The crate will still be evaluated and
+# reported normally, but it won't cause a non-zero exit code.
+#
+# Version requirements use standard semver syntax:
+# - "*"              matches any version
+# - "=1.2.3"         matches exactly version 1.2.3
+# - "^1.2"           matches >=1.2.0, <2.0.0
+# - "~1.2"           matches >=1.2.0, <1.3.0
+# - ">=1.0, <2.0"    matches versions in range
+#
+# Example:
+# [[allow_list]]
+# name = "some-crate"
+# version = "=1.2.3"
+#
+# [[allow_list]]
+# name = "another-crate"
+# version = "^2.0"
+# ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
 # Expressions
 #
 # Weight rationale (total = 109 points):

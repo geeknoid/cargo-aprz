@@ -3,6 +3,7 @@ use crate::expr::Expression;
 use camino::{Utf8Path, Utf8PathBuf};
 use core::time::Duration;
 use ohno::{IntoAppError, app_err};
+use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
@@ -10,9 +11,33 @@ use std::io;
 /// The default configuration TOML content, embedded from `default_config.toml`
 pub const DEFAULT_CONFIG_TOML: &str = include_str!("../../default_config.toml");
 
+/// An entry in the allow list that exempts a specific crate+version from triggering
+/// error exit codes when using `--error-if-medium-risk` or `--error-if-high-risk`.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AllowListEntry {
+    /// The crate name to allow
+    pub name: String,
+
+    /// A semver version requirement (e.g. "^1.0", ">=2.0, <3.0", "=1.2.3", "*")
+    pub version: VersionReq,
+}
+
+impl AllowListEntry {
+    /// Check if this entry matches the given crate name and version.
+    #[must_use]
+    pub fn matches(&self, name: &str, version: &Version) -> bool {
+        self.name == name && self.version.matches(version)
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    /// Crates that are exempt from triggering error exit codes with `--error-if-medium-risk` or `--error-if-high-risk`
+    #[serde(default)]
+    pub allow_list: Vec<AllowListEntry>,
+
     /// Expressions that must ALL evaluate to true for the crate to avoid being flagged as high risk
     #[serde(default)]
     pub high_risk: Vec<Expression>,
@@ -63,6 +88,12 @@ const fn default_cache_ttl() -> Duration {
 }
 
 impl Config {
+    /// Check if a crate is on the allow list.
+    #[must_use]
+    pub fn is_allowed(&self, name: &str, version: &Version) -> bool {
+        self.allow_list.iter().any(|entry| entry.matches(name, version))
+    }
+
     /// Load configuration from a file or use defaults
     ///
     /// # Errors
@@ -219,5 +250,89 @@ mod tests {
     #[test]
     fn test_default_config_toml_is_not_empty() {
         assert!(!DEFAULT_CONFIG_TOML.is_empty());
+    }
+
+    #[test]
+    fn test_default_config_has_empty_allow_list() {
+        let config = Config::default();
+        assert!(config.allow_list.is_empty());
+    }
+
+    #[test]
+    fn test_allow_list_entry_matches_exact_version() {
+        let entry = AllowListEntry {
+            name: "foo".to_string(),
+            version: VersionReq::parse("=1.2.3").unwrap(),
+        };
+        assert!(entry.matches("foo", &Version::new(1, 2, 3)));
+        assert!(!entry.matches("foo", &Version::new(1, 2, 4)));
+        assert!(!entry.matches("bar", &Version::new(1, 2, 3)));
+    }
+
+    #[test]
+    fn test_allow_list_entry_matches_caret_range() {
+        let entry = AllowListEntry {
+            name: "foo".to_string(),
+            version: VersionReq::parse("^1.0").unwrap(),
+        };
+        assert!(entry.matches("foo", &Version::new(1, 0, 0)));
+        assert!(entry.matches("foo", &Version::new(1, 9, 9)));
+        assert!(!entry.matches("foo", &Version::new(2, 0, 0)));
+    }
+
+    #[test]
+    fn test_allow_list_entry_matches_wildcard() {
+        let entry = AllowListEntry {
+            name: "foo".to_string(),
+            version: VersionReq::parse("*").unwrap(),
+        };
+        assert!(entry.matches("foo", &Version::new(0, 0, 1)));
+        assert!(entry.matches("foo", &Version::new(99, 99, 99)));
+        assert!(!entry.matches("bar", &Version::new(1, 0, 0)));
+    }
+
+    #[test]
+    fn test_is_allowed_matches() {
+        let mut config = Config::default();
+        config.allow_list.push(AllowListEntry {
+            name: "foo".to_string(),
+            version: VersionReq::parse("^1.0").unwrap(),
+        });
+        assert!(config.is_allowed("foo", &Version::new(1, 2, 3)));
+        assert!(!config.is_allowed("foo", &Version::new(2, 0, 0)));
+        assert!(!config.is_allowed("bar", &Version::new(1, 0, 0)));
+    }
+
+    #[test]
+    fn test_is_allowed_empty_list() {
+        let config = Config::default();
+        assert!(!config.is_allowed("foo", &Version::new(1, 0, 0)));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "Miri cannot call GetTempPathW")]
+    fn test_load_config_with_allow_list() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_path = Utf8PathBuf::try_from(tmp.path().join("aprz.toml")).unwrap();
+        let toml_content = r#"
+medium_risk_threshold = 30.0
+low_risk_threshold = 70.0
+
+[[allow_list]]
+name = "some-crate"
+version = "=1.2.3"
+
+[[allow_list]]
+name = "another-crate"
+version = "^2.0"
+"#;
+        fs::write(&config_path, toml_content).unwrap();
+        let workspace_root = Utf8PathBuf::try_from(tmp.path().to_path_buf()).unwrap();
+        let config = Config::load(&workspace_root, Some(&config_path)).unwrap();
+        assert_eq!(config.allow_list.len(), 2);
+        assert!(config.is_allowed("some-crate", &Version::new(1, 2, 3)));
+        assert!(!config.is_allowed("some-crate", &Version::new(1, 2, 4)));
+        assert!(config.is_allowed("another-crate", &Version::new(2, 5, 0)));
+        assert!(!config.is_allowed("another-crate", &Version::new(1, 0, 0)));
     }
 }

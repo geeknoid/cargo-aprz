@@ -331,3 +331,127 @@ async fn test_crates_command_with_error_if_high_risk_flag() {
     let eval = &crates[0]["appraisal"];
     assert!(!eval.is_null(), "appraisal should be present when --error-if-high-risk is used");
 }
+
+// ---------------------------------------------------------------------------
+// Allow list integration tests — verify that allow_list entries in the config
+// prevent error exit codes from --error-if-high-risk / --error-if-medium-risk.
+// ---------------------------------------------------------------------------
+
+/// Config with an always-failing `high_risk` gate so every crate is flagged high risk.
+const ALWAYS_FAIL_CONFIG: &str = r#"
+medium_risk_threshold = 30.0
+low_risk_threshold = 70.0
+
+[[high_risk]]
+name = "Always Fail"
+description = "Always flags crate as high risk"
+expression = "false"
+"#;
+
+#[tokio::test]
+#[cfg_attr(miri, ignore = "Miri cannot call mkdir")]
+async fn test_error_if_high_risk_triggers_without_allow_list() {
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let config_path = temp_dir.path().join("aprz.toml");
+    std::fs::write(&config_path, ALWAYS_FAIL_CONFIG).expect("write config");
+
+    let mut host = TestHost::new();
+    cargo_aprz_lib::run(
+        &mut host,
+        [
+            "cargo",
+            "aprz",
+            "crates",
+            "serde@1.0.200",
+            "--error-if-high-risk",
+            "--config",
+            config_path.to_str().expect("valid path"),
+            "--color",
+            "never",
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        host.exit_code,
+        Some(1),
+        "should exit with code 1 when high risk crate is not on allow list"
+    );
+}
+
+#[tokio::test]
+#[cfg_attr(miri, ignore = "Miri cannot call mkdir")]
+async fn test_error_if_high_risk_bypassed_by_allow_list() {
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let config_content = format!(
+        r#"{ALWAYS_FAIL_CONFIG}
+[[allow_list]]
+name = "serde"
+version = "=1.0.200"
+"#
+    );
+    let config_path = temp_dir.path().join("aprz.toml");
+    std::fs::write(&config_path, &config_content).expect("write config");
+
+    let mut host = TestHost::new();
+    cargo_aprz_lib::run(
+        &mut host,
+        [
+            "cargo",
+            "aprz",
+            "crates",
+            "serde@1.0.200",
+            "--error-if-high-risk",
+            "--config",
+            config_path.to_str().expect("valid path"),
+            "--color",
+            "never",
+        ],
+    )
+    .await;
+
+    assert!(
+        host.exit_code.is_none(),
+        "should not exit with error when crate is on allow list, but got exit code {:?}: {}",
+        host.exit_code,
+        host.error_str()
+    );
+}
+
+#[tokio::test]
+#[cfg_attr(miri, ignore = "Miri cannot call mkdir")]
+async fn test_error_if_high_risk_allow_list_wrong_version_still_fails() {
+    let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+    let config_content = format!(
+        r#"{ALWAYS_FAIL_CONFIG}
+[[allow_list]]
+name = "serde"
+version = "=999.0.0"
+"#
+    );
+    let config_path = temp_dir.path().join("aprz.toml");
+    std::fs::write(&config_path, &config_content).expect("write config");
+
+    let mut host = TestHost::new();
+    cargo_aprz_lib::run(
+        &mut host,
+        [
+            "cargo",
+            "aprz",
+            "crates",
+            "serde@1.0.200",
+            "--error-if-high-risk",
+            "--config",
+            config_path.to_str().expect("valid path"),
+            "--color",
+            "never",
+        ],
+    )
+    .await;
+
+    assert_eq!(
+        host.exit_code,
+        Some(1),
+        "should exit with code 1 when allow list version doesn't match"
+    );
+}

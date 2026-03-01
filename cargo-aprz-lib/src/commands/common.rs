@@ -420,29 +420,178 @@ impl<'a, H: super::Host> Common<'a, H> {
             fs::write(filename, json_output)?;
         }
 
-        // If --error-if-medium-risk flag is set, return error if any crate is medium or high risk
-        if self.error_if_medium_risk {
-            let has_rejected = reportable_crates
-                .iter()
-                .any(|crate_info| crate_info.appraisal.as_ref().is_some_and(|eval| matches!(eval.risk, Risk::Medium | Risk::High)));
-
-            if has_rejected {
-                return Err(ohno::AppError::new("one or more crates were flagged as medium or high risk"));
-            }
-        }
-
-        // If --error-if-high-risk flag is set, return error if any crate is high risk
-        if self.error_if_high_risk {
-            let has_rejected = reportable_crates
-                .iter()
-                .any(|crate_info| crate_info.appraisal.as_ref().is_some_and(|eval| eval.risk == Risk::High));
-
-            if has_rejected {
-                return Err(ohno::AppError::new("one or more crates were flagged as high risk"));
-            }
-        }
+        // If --error-if-medium-risk flag is set, return error if any non-allowed crate is medium or high risk
+        // If --error-if-high-risk flag is set, return error if any non-allowed crate is high risk
+        check_risk_errors(&reportable_crates, &self.config, self.error_if_medium_risk, self.error_if_high_risk)?;
 
         Ok(())
+    }
+}
+
+fn check_risk_errors(
+    reportable_crates: &[ReportableCrate],
+    config: &Config,
+    error_if_medium_risk: bool,
+    error_if_high_risk: bool,
+) -> Result<()> {
+    if error_if_medium_risk {
+        let has_rejected = reportable_crates.iter().any(|crate_info| {
+            crate_info.appraisal.as_ref().is_some_and(|eval| matches!(eval.risk, Risk::Medium | Risk::High))
+                && !config.is_allowed(&crate_info.name, &crate_info.version)
+        });
+
+        if has_rejected {
+            return Err(ohno::AppError::new("one or more crates were flagged as medium or high risk"));
+        }
+    }
+
+    if error_if_high_risk {
+        let has_rejected = reportable_crates.iter().any(|crate_info| {
+            crate_info.appraisal.as_ref().is_some_and(|eval| eval.risk == Risk::High)
+                && !config.is_allowed(&crate_info.name, &crate_info.version)
+        });
+
+        if has_rejected {
+            return Err(ohno::AppError::new("one or more crates were flagged as high risk"));
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::config::AllowListEntry;
+    use crate::expr::{Appraisal, Risk};
+    use semver::{Version, VersionReq};
+
+    fn make_crate(name: &str, version: Version, risk: Risk) -> ReportableCrate {
+        ReportableCrate::new(
+            Arc::from(name),
+            Arc::new(version),
+            vec![],
+            Some(Appraisal::new(risk, vec![], 0, 0, 0.0)),
+        )
+    }
+
+    #[test]
+    fn test_check_risk_errors_no_flags() {
+        let crates = vec![make_crate("foo", Version::new(1, 0, 0), Risk::High)];
+        let config = Config::default();
+        check_risk_errors(&crates, &config, false, false).unwrap();
+    }
+
+    #[test]
+    fn test_check_risk_errors_high_risk_flag_rejects() {
+        let crates = vec![make_crate("foo", Version::new(1, 0, 0), Risk::High)];
+        let config = Config::default();
+        let _ = check_risk_errors(&crates, &config, false, true).unwrap_err();
+    }
+
+    #[test]
+    fn test_check_risk_errors_high_risk_flag_allows_medium() {
+        let crates = vec![make_crate("foo", Version::new(1, 0, 0), Risk::Medium)];
+        let config = Config::default();
+        check_risk_errors(&crates, &config, false, true).unwrap();
+    }
+
+    #[test]
+    fn test_check_risk_errors_medium_risk_flag_rejects_medium() {
+        let crates = vec![make_crate("foo", Version::new(1, 0, 0), Risk::Medium)];
+        let config = Config::default();
+        let _ = check_risk_errors(&crates, &config, true, false).unwrap_err();
+    }
+
+    #[test]
+    fn test_check_risk_errors_medium_risk_flag_rejects_high() {
+        let crates = vec![make_crate("foo", Version::new(1, 0, 0), Risk::High)];
+        let config = Config::default();
+        let _ = check_risk_errors(&crates, &config, true, false).unwrap_err();
+    }
+
+    #[test]
+    fn test_check_risk_errors_medium_risk_flag_allows_low() {
+        let crates = vec![make_crate("foo", Version::new(1, 0, 0), Risk::Low)];
+        let config = Config::default();
+        check_risk_errors(&crates, &config, true, false).unwrap();
+    }
+
+    #[test]
+    fn test_check_risk_errors_allow_list_bypasses_high_risk() {
+        let crates = vec![make_crate("foo", Version::new(1, 0, 0), Risk::High)];
+        let mut config = Config::default();
+        config.allow_list.push(AllowListEntry {
+            name: "foo".to_string(),
+            version: VersionReq::parse("^1.0").unwrap(),
+        });
+        check_risk_errors(&crates, &config, false, true).unwrap();
+    }
+
+    #[test]
+    fn test_check_risk_errors_allow_list_bypasses_medium_risk() {
+        let crates = vec![make_crate("foo", Version::new(1, 0, 0), Risk::Medium)];
+        let mut config = Config::default();
+        config.allow_list.push(AllowListEntry {
+            name: "foo".to_string(),
+            version: VersionReq::parse("*").unwrap(),
+        });
+        check_risk_errors(&crates, &config, true, false).unwrap();
+    }
+
+    #[test]
+    fn test_check_risk_errors_allow_list_wrong_version_still_rejects() {
+        let crates = vec![make_crate("foo", Version::new(2, 0, 0), Risk::High)];
+        let mut config = Config::default();
+        config.allow_list.push(AllowListEntry {
+            name: "foo".to_string(),
+            version: VersionReq::parse("^1.0").unwrap(),
+        });
+        let _ = check_risk_errors(&crates, &config, false, true).unwrap_err();
+    }
+
+    #[test]
+    fn test_check_risk_errors_allow_list_wrong_name_still_rejects() {
+        let crates = vec![make_crate("bar", Version::new(1, 0, 0), Risk::High)];
+        let mut config = Config::default();
+        config.allow_list.push(AllowListEntry {
+            name: "foo".to_string(),
+            version: VersionReq::parse("*").unwrap(),
+        });
+        let _ = check_risk_errors(&crates, &config, false, true).unwrap_err();
+    }
+
+    #[test]
+    fn test_check_risk_errors_mixed_crates_one_allowed() {
+        let crates = vec![
+            make_crate("foo", Version::new(1, 0, 0), Risk::High),
+            make_crate("bar", Version::new(1, 0, 0), Risk::High),
+        ];
+        let mut config = Config::default();
+        config.allow_list.push(AllowListEntry {
+            name: "foo".to_string(),
+            version: VersionReq::parse("*").unwrap(),
+        });
+        // bar is still high risk and not allowed
+        let _ = check_risk_errors(&crates, &config, false, true).unwrap_err();
+    }
+
+    #[test]
+    fn test_check_risk_errors_mixed_crates_all_allowed() {
+        let crates = vec![
+            make_crate("foo", Version::new(1, 0, 0), Risk::High),
+            make_crate("bar", Version::new(1, 0, 0), Risk::Medium),
+        ];
+        let mut config = Config::default();
+        config.allow_list.push(AllowListEntry {
+            name: "foo".to_string(),
+            version: VersionReq::parse("*").unwrap(),
+        });
+        config.allow_list.push(AllowListEntry {
+            name: "bar".to_string(),
+            version: VersionReq::parse("*").unwrap(),
+        });
+        check_risk_errors(&crates, &config, true, true).unwrap();
     }
 }
 

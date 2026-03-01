@@ -237,6 +237,23 @@ can use the `--error-if-high-risk` option to make `cargo-aprz` return a non-zero
 flagged as high risk based on the configured expressions. Similarly, `--error-if-medium-risk` returns a non-zero exit code
 if any crate is flagged as medium or high risk.
 
+You can exempt specific crates from triggering these error exit codes by adding them to the allow list
+in your configuration file. Allowed crates are still evaluated and reported normally, but they won't
+cause a non-zero exit code. Each entry specifies a crate name and a semver version requirement:
+
+```toml
+[[allow_list]]
+name = "some-crate"
+version = "=1.2.3"
+
+[[allow_list]]
+name = "another-crate"
+version = "^2.0"
+```
+
+Version requirements use standard semver syntax such as `"*"` (any version), `"=1.2.3"` (exact),
+`"^1.2"` (compatible), `"~1.2"` (patch-level), or `">=1.0, <2.0"` (range).
+
 ## Troubleshooting
 
 The `crates` and `deps` commands both let you specify a logging level using the `--log-level` option. Turning on logging can be useful
