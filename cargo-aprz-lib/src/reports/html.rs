@@ -393,12 +393,12 @@ fn write_summary<W: Write>(
 
     writeln!(writer, "  <div class=\"summary-row\">")?;
     writeln!(writer, "    <div class=\"summary\">")?;
-    writeln!(writer, "      <div class=\"summary-card total\" onclick=\"toggleRiskList('all')\"><div class=\"label\">Total Crates</div><div class=\"value\">{total}</div></div>")?;
-    writeln!(writer, "      <div class=\"summary-card high\" onclick=\"toggleRiskList('high')\"><div class=\"label\">High Risk</div><div class=\"value\">{high}</div></div>")?;
-    writeln!(writer, "      <div class=\"summary-card medium\" onclick=\"toggleRiskList('medium')\"><div class=\"label\">Medium Risk</div><div class=\"value\">{medium}</div></div>")?;
-    writeln!(writer, "      <div class=\"summary-card low\" onclick=\"toggleRiskList('low')\"><div class=\"label\">Low Risk</div><div class=\"value\">{low}</div></div>")?;
+    writeln!(writer, "      <div class=\"summary-card total\" role=\"button\" tabindex=\"0\" onclick=\"toggleRiskList('all')\" onkeydown=\"if(event.key==='Enter'||event.key===' '){{event.preventDefault();toggleRiskList('all')}}\"><div class=\"label\">Total Crates</div><div class=\"value\">{total}</div></div>")?;
+    writeln!(writer, "      <div class=\"summary-card high\" role=\"button\" tabindex=\"0\" onclick=\"toggleRiskList('high')\" onkeydown=\"if(event.key==='Enter'||event.key===' '){{event.preventDefault();toggleRiskList('high')}}\"><div class=\"label\">High Risk</div><div class=\"value\">{high}</div></div>")?;
+    writeln!(writer, "      <div class=\"summary-card medium\" role=\"button\" tabindex=\"0\" onclick=\"toggleRiskList('medium')\" onkeydown=\"if(event.key==='Enter'||event.key===' '){{event.preventDefault();toggleRiskList('medium')}}\"><div class=\"label\">Medium Risk</div><div class=\"value\">{medium}</div></div>")?;
+    writeln!(writer, "      <div class=\"summary-card low\" role=\"button\" tabindex=\"0\" onclick=\"toggleRiskList('low')\" onkeydown=\"if(event.key==='Enter'||event.key===' '){{event.preventDefault();toggleRiskList('low')}}\"><div class=\"label\">Low Risk</div><div class=\"value\">{low}</div></div>")?;
     if not_evaluated > 0 {
-        writeln!(writer, "      <div class=\"summary-card not-eval\" onclick=\"toggleRiskList('not-eval')\"><div class=\"label\">Not Evaluated</div><div class=\"value\">{not_evaluated}</div></div>")?;
+        writeln!(writer, "      <div class=\"summary-card not-eval\" role=\"button\" tabindex=\"0\" onclick=\"toggleRiskList('not-eval')\" onkeydown=\"if(event.key==='Enter'||event.key===' '){{event.preventDefault();toggleRiskList('not-eval')}}\"><div class=\"label\">Not Evaluated</div><div class=\"value\">{not_evaluated}</div></div>")?;
     }
     writeln!(writer, "    </div>")?;
     write_pie_chart(writer, low, medium, high, not_evaluated)?;
@@ -483,7 +483,7 @@ fn write_pie_chart<W: Write>(writer: &mut W, low: usize, medium: usize, high: us
 fn write_risk_crate_list<W: Write>(writer: &mut W, class: &str, title: &str, crate_entries: &[(&str, String, String, f64)], expanded: bool, first_pill_emitted: &mut bool) -> Result<()> {
     let open = if expanded { " open" } else { "" };
     writeln!(writer, "  <details id=\"risk-{class}\" class=\"risk-list {class}\"{open}>")?;
-    writeln!(writer, "    <summary>{title}<span class=\"sort-controls\"><button class=\"sort-btn\" onclick=\"sortCrates(this, 'alpha')\" title=\"Sort A\u{2013}Z\">A\u{2013}Z</button><button class=\"sort-btn active\" onclick=\"sortCrates(this, 'score')\" title=\"Sort by score\">Score</button></span></summary>")?;
+    writeln!(writer, "    <summary>{title}<span class=\"sort-controls\"><button type=\"button\" class=\"sort-btn\" onclick=\"sortCrates(this, 'alpha', event)\" title=\"Sort A\u{2013}Z\">A\u{2013}Z</button><button type=\"button\" class=\"sort-btn active\" onclick=\"sortCrates(this, 'score', event)\" title=\"Sort by score\">Score</button></span></summary>")?;
     writeln!(writer, "    <div class=\"crate-names\">")?;
     for (name, version, description, score) in crate_entries {
         let anchor = crate_anchor_id(name, version);
@@ -500,7 +500,7 @@ fn write_risk_crate_list<W: Write>(writer: &mut W, class: &str, title: &str, cra
         };
         writeln!(
             writer,
-            "      <a href=\"#{anchor}\" onclick=\"selectCrate('{anchor}', this, event)\" title=\"{tooltip}\" data-name=\"{}\" data-score=\"{score:.0}\"><span class=\"crate-name{active}\">{}</span></a>",
+            "      <a href=\"#{anchor}\" onclick=\"selectCrate('{anchor}', this, event)\" title=\"{tooltip}\" data-name=\"{}\" data-score=\"{score}\"><span class=\"crate-name{active}\">{}</span></a>",
             html_escape(name),
             html_escape(name)
         )?;
@@ -695,7 +695,9 @@ fn write_scripts<W: Write>(writer: &mut W, has_risk_lists: bool) -> Result<()> {
         writeln!(writer, "      const span = pill.querySelector('.crate-name') || pill;")?;
         writeln!(writer, "      span.classList.add('active');")?;
         writeln!(writer, "    }}")?;
-        writeln!(writer, "    function sortCrates(btn, mode) {{")?;
+        writeln!(writer, "    function sortCrates(btn, mode, event) {{")?;
+        writeln!(writer, "      event.preventDefault();")?;
+        writeln!(writer, "      event.stopPropagation();")?;
         writeln!(writer, "      const list = btn.closest('.risk-list');")?;
         writeln!(writer, "      list.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));")?;
         writeln!(writer, "      btn.classList.add('active');")?;

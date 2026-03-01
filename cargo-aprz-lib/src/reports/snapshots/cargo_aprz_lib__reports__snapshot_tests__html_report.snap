@@ -193,11 +193,11 @@ expression: output
   </div>
   <div class="summary-row">
     <div class="summary">
-      <div class="summary-card total" onclick="toggleRiskList('all')"><div class="label">Total Crates</div><div class="value">3</div></div>
-      <div class="summary-card high" onclick="toggleRiskList('high')"><div class="label">High Risk</div><div class="value">1</div></div>
-      <div class="summary-card medium" onclick="toggleRiskList('medium')"><div class="label">Medium Risk</div><div class="value">0</div></div>
-      <div class="summary-card low" onclick="toggleRiskList('low')"><div class="label">Low Risk</div><div class="value">1</div></div>
-      <div class="summary-card not-eval" onclick="toggleRiskList('not-eval')"><div class="label">Not Evaluated</div><div class="value">1</div></div>
+      <div class="summary-card total" role="button" tabindex="0" onclick="toggleRiskList('all')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleRiskList('all')}"><div class="label">Total Crates</div><div class="value">3</div></div>
+      <div class="summary-card high" role="button" tabindex="0" onclick="toggleRiskList('high')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleRiskList('high')}"><div class="label">High Risk</div><div class="value">1</div></div>
+      <div class="summary-card medium" role="button" tabindex="0" onclick="toggleRiskList('medium')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleRiskList('medium')}"><div class="label">Medium Risk</div><div class="value">0</div></div>
+      <div class="summary-card low" role="button" tabindex="0" onclick="toggleRiskList('low')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleRiskList('low')}"><div class="label">Low Risk</div><div class="value">1</div></div>
+      <div class="summary-card not-eval" role="button" tabindex="0" onclick="toggleRiskList('not-eval')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleRiskList('not-eval')}"><div class="label">Not Evaluated</div><div class="value">1</div></div>
     </div>
       <svg class="pie-chart" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg">
         <path d="M 80,80 L 80.00,8.00 A 72,72 0 0,1 142.35,116.00 Z" fill="var(--risk-high)" stroke="var(--bg-color)" stroke-width="1"/>
@@ -207,19 +207,19 @@ expression: output
       </svg>
   </div>
   <details id="risk-high" class="risk-list high" open>
-    <summary>1 High Risk Crate<span class="sort-controls"><button class="sort-btn" onclick="sortCrates(this, 'alpha')" title="Sort A–Z">A–Z</button><button class="sort-btn active" onclick="sortCrates(this, 'score')" title="Sort by score">Score</button></span></summary>
+    <summary>1 High Risk Crate<span class="sort-controls"><button type="button" class="sort-btn" onclick="sortCrates(this, 'alpha', event)" title="Sort A–Z">A–Z</button><button type="button" class="sort-btn active" onclick="sortCrates(this, 'score', event)" title="Sort by score">Score</button></span></summary>
     <div class="crate-names">
       <a href="#crate-serde-1.0.195" onclick="selectCrate('crate-serde-1.0.195', this, event)" title="serde v1.0.195" data-name="serde" data-score="0"><span class="crate-name active">serde</span></a>
     </div>
   </details>
   <details id="risk-low" class="risk-list low">
-    <summary>1 Low Risk Crate<span class="sort-controls"><button class="sort-btn" onclick="sortCrates(this, 'alpha')" title="Sort A–Z">A–Z</button><button class="sort-btn active" onclick="sortCrates(this, 'score')" title="Sort by score">Score</button></span></summary>
+    <summary>1 Low Risk Crate<span class="sort-controls"><button type="button" class="sort-btn" onclick="sortCrates(this, 'alpha', event)" title="Sort A–Z">A–Z</button><button type="button" class="sort-btn active" onclick="sortCrates(this, 'score', event)" title="Sort by score">Score</button></span></summary>
     <div class="crate-names">
       <a href="#crate-tokio-1.35.0" onclick="selectCrate('crate-tokio-1.35.0', this, event)" title="tokio v1.35.0" data-name="tokio" data-score="100"><span class="crate-name">tokio</span></a>
     </div>
   </details>
   <details id="risk-not-eval" class="risk-list not-eval">
-    <summary>1 Not Evaluated Crate<span class="sort-controls"><button class="sort-btn" onclick="sortCrates(this, 'alpha')" title="Sort A–Z">A–Z</button><button class="sort-btn active" onclick="sortCrates(this, 'score')" title="Sort by score">Score</button></span></summary>
+    <summary>1 Not Evaluated Crate<span class="sort-controls"><button type="button" class="sort-btn" onclick="sortCrates(this, 'alpha', event)" title="Sort A–Z">A–Z</button><button type="button" class="sort-btn active" onclick="sortCrates(this, 'score', event)" title="Sort by score">Score</button></span></summary>
     <div class="crate-names">
       <a href="#crate-anyhow-1.0.75" onclick="selectCrate('crate-anyhow-1.0.75', this, event)" title="anyhow v1.0.75" data-name="anyhow" data-score="0"><span class="crate-name">anyhow</span></a>
     </div>
@@ -530,7 +530,9 @@ expression: output
       const span = pill.querySelector('.crate-name') || pill;
       span.classList.add('active');
     }
-    function sortCrates(btn, mode) {
+    function sortCrates(btn, mode, event) {
+      event.preventDefault();
+      event.stopPropagation();
       const list = btn.closest('.risk-list');
       list.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
