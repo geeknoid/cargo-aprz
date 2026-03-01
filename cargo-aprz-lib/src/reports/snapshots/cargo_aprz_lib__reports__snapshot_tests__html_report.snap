@@ -59,15 +59,19 @@ expression: output
     body.light-theme .pie-chart circle, body.light-theme .pie-chart path { stroke: #000; stroke-width: 0.5; }
     .pie-border { stroke: none; stroke-width: 0; }
     body.light-theme .pie-border { stroke: #000; stroke-width: 1.5; }
-    .summary-card { background: var(--summary-card-bg); border-radius: 10px; padding: 16px 20px; box-shadow: var(--shadow); border: 1px solid var(--border-color); text-align: center; }
+    .summary-card { background: var(--summary-card-bg); border-radius: 10px; padding: 16px 20px; box-shadow: var(--shadow); border: 1px solid var(--border-color); text-align: center; cursor: pointer; transition: opacity 0.15s; }
+    .summary-card:hover { opacity: 0.85; }
     .summary-card .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-secondary); font-weight: 600; margin-bottom: 4px; }
     .summary-card .value { font-size: 28px; font-weight: 700; }
-    body.light-theme .summary-card .value { text-shadow: -0.5px -0.5px 0 #000, 0.5px -0.5px 0 #000, -0.5px 0.5px 0 #000, 0.5px 0.5px 0 #000; }
-    .summary-card.total .value { color: var(--accent-color); }
-    .summary-card.low .value { color: var(--risk-low); }
-    .summary-card.medium .value { color: var(--risk-medium); }
-    .summary-card.high .value { color: var(--risk-high); }
+    .summary-card.total .value { color: #2563eb; }
+    .summary-card.low .value { color: #15803d; }
+    .summary-card.medium .value { color: #d97706; }
+    .summary-card.high .value { color: #dc2626; }
     .summary-card.not-eval .value { color: var(--text-secondary); }
+    body.dark-theme .summary-card.total .value { color: var(--accent-color); }
+    body.dark-theme .summary-card.low .value { color: var(--risk-low); }
+    body.dark-theme .summary-card.medium .value { color: var(--risk-medium); }
+    body.dark-theme .summary-card.high .value { color: var(--risk-high); }
     .crate-card { background: var(--card-bg); border-radius: 12px; box-shadow: var(--shadow); border: 1px solid var(--border-color); margin-bottom: 20px; overflow: hidden; transition: box-shadow 0.2s ease; }
     .crate-card:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.12), 0 8px 24px rgba(0,0,0,0.08); }
     .crate-card-header { display: flex; align-items: center; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--border-color); }
@@ -102,10 +106,12 @@ expression: output
     body.dark-theme .disposition.failed { background: #7f1d1d; color: #fca5a5; }
     body.dark-theme .disposition.inconclusive { background: #334155; color: #94a3b8; }
     .tabs { }
-    .tab-nav { display: flex; gap: 4px; border-bottom: 2px solid var(--border-color); padding: 0 20px; overflow-x: auto; overflow-y: hidden; }
+    .tab-nav { display: flex; gap: 4px; border-bottom: 2px solid var(--border-color); padding: 0 20px; margin-top: 5px; overflow-x: auto; overflow-y: hidden; }
     .tab-btn { background: var(--hover-bg); border: 1px solid var(--border-color); border-bottom: none; border-radius: 6px 6px 0 0; margin-bottom: -2px; padding: 10px 16px; font-size: 13px; font-weight: 600; color: var(--text-secondary); cursor: pointer; white-space: nowrap; transition: all 0.15s ease; }
-    .tab-btn:hover { color: var(--text-color); background: var(--card-bg); }
-    .tab-btn.active { color: var(--text-color); background: var(--card-bg); border-color: var(--border-color); border-bottom: 2px solid var(--card-bg); }
+    .tab-btn:hover { color: var(--text-color); background: #e8e8e8; }
+    body.dark-theme .tab-btn:hover { background: #334155; }
+    .tab-btn.active { color: var(--text-color); background: #e8e8e8; border-color: var(--border-color); border-bottom: 2px solid #e8e8e8; }
+    body.dark-theme .tab-btn.active { background: #334155; border-bottom-color: #334155; }
     .tab-panels { display: grid; }
     .tab-panel { grid-area: 1 / 1; visibility: hidden; }
     .tab-panel.active { visibility: visible; }
@@ -113,7 +119,7 @@ expression: output
     .risk-list summary { font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; cursor: pointer; font-weight: 700; }
     .risk-list .crate-names { margin-top: 6px; font-size: 14px; }
     .risk-list .crate-names a { text-decoration: none; }
-    .risk-list .crate-name { display: inline-block; padding: 2px 10px; border-radius: 12px; margin: 2px 4px 2px 0; font-weight: 500; font-size: 13px; cursor: pointer; transition: opacity 0.15s; }
+    .risk-list .crate-name { display: inline-block; padding: 2px 10px; border-radius: 12px; margin: 3px 2px 3px 1px; font-weight: 500; font-size: 13px; cursor: pointer; transition: opacity 0.15s; }
     .risk-list .crate-name:hover { opacity: 0.8; }
     .risk-list.high { border-left: 4px solid var(--risk-high); }
     .risk-list.high strong { color: var(--risk-high); }
@@ -128,6 +134,13 @@ expression: output
     .risk-list.not-eval strong { color: var(--risk-not-eval); }
     .risk-list.not-eval .crate-name { background: var(--risk-not-eval); color: var(--risk-not-eval-text); }
     .risk-list .crate-name.active { outline: 2px solid var(--accent-color); outline-offset: 1px; }
+    .sort-controls { float: right; display: inline-flex; margin-left: 12px; }
+    .sort-btn { background: var(--hover-bg); border: 1px solid var(--border-color); padding: 1px 8px; font-size: 11px; font-weight: 600; color: var(--text-secondary); cursor: pointer; transition: all 0.15s ease; text-transform: none; letter-spacing: 0; }
+    .sort-btn:first-child { border-radius: 4px 0 0 4px; }
+    .sort-btn:last-child { border-radius: 0 4px 4px 0; border-left: none; }
+    .sort-btn:hover { color: var(--text-color); }
+    .sort-btn.active { background: #4b5563; color: #ffffff; border-color: #4b5563; }
+    .sort-btn.active + .sort-btn { border-left: 1px solid var(--border-color); }
     .na { color: var(--text-secondary); font-style: italic; font-size: 13px; }
     a { color: var(--accent-color); text-decoration: none; }
     a:hover { text-decoration: underline; }
@@ -180,11 +193,11 @@ expression: output
   </div>
   <div class="summary-row">
     <div class="summary">
-      <div class="summary-card total"><div class="label">Total Crates</div><div class="value">3</div></div>
-      <div class="summary-card low"><div class="label">Low Risk</div><div class="value">1</div></div>
-      <div class="summary-card medium"><div class="label">Medium Risk</div><div class="value">0</div></div>
-      <div class="summary-card high"><div class="label">High Risk</div><div class="value">1</div></div>
-      <div class="summary-card not-eval"><div class="label">Not Evaluated</div><div class="value">1</div></div>
+      <div class="summary-card total" role="button" tabindex="0" onclick="toggleRiskList('all')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleRiskList('all')}"><div class="label">Total Crates</div><div class="value">3</div></div>
+      <div class="summary-card high" role="button" tabindex="0" onclick="toggleRiskList('high')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleRiskList('high')}"><div class="label">High Risk</div><div class="value">1</div></div>
+      <div class="summary-card medium" role="button" tabindex="0" onclick="toggleRiskList('medium')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleRiskList('medium')}"><div class="label">Medium Risk</div><div class="value">0</div></div>
+      <div class="summary-card low" role="button" tabindex="0" onclick="toggleRiskList('low')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleRiskList('low')}"><div class="label">Low Risk</div><div class="value">1</div></div>
+      <div class="summary-card not-eval" role="button" tabindex="0" onclick="toggleRiskList('not-eval')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleRiskList('not-eval')}"><div class="label">Not Evaluated</div><div class="value">1</div></div>
     </div>
       <svg class="pie-chart" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg">
         <path d="M 80,80 L 80.00,8.00 A 72,72 0 0,1 142.35,116.00 Z" fill="var(--risk-high)" stroke="var(--bg-color)" stroke-width="1"/>
@@ -193,22 +206,22 @@ expression: output
         <circle class="pie-border" cx="80" cy="80" r="72" fill="none"/>
       </svg>
   </div>
-  <details class="risk-list high" open>
-    <summary>1 High Risk Crate</summary>
+  <details id="risk-high" class="risk-list high" open>
+    <summary>1 High Risk Crate<span class="sort-controls"><button type="button" class="sort-btn" onclick="sortCrates(this, 'alpha', event)" title="Sort A–Z">A–Z</button><button type="button" class="sort-btn active" onclick="sortCrates(this, 'score', event)" title="Sort by score">Score</button></span></summary>
     <div class="crate-names">
-      <a href="#crate-serde-1.0.195" onclick="selectCrate('crate-serde-1.0.195', this, event)" title="serde v1.0.195"><span class="crate-name active">serde</span></a>
+      <a href="#crate-serde-1.0.195" onclick="selectCrate('crate-serde-1.0.195', this, event)" title="serde v1.0.195" data-name="serde" data-score="0"><span class="crate-name active">serde</span></a>
     </div>
   </details>
-  <details class="risk-list low">
-    <summary>1 Low Risk Crate</summary>
+  <details id="risk-low" class="risk-list low">
+    <summary>1 Low Risk Crate<span class="sort-controls"><button type="button" class="sort-btn" onclick="sortCrates(this, 'alpha', event)" title="Sort A–Z">A–Z</button><button type="button" class="sort-btn active" onclick="sortCrates(this, 'score', event)" title="Sort by score">Score</button></span></summary>
     <div class="crate-names">
-      <a href="#crate-tokio-1.35.0" onclick="selectCrate('crate-tokio-1.35.0', this, event)" title="tokio v1.35.0"><span class="crate-name">tokio</span></a>
+      <a href="#crate-tokio-1.35.0" onclick="selectCrate('crate-tokio-1.35.0', this, event)" title="tokio v1.35.0" data-name="tokio" data-score="100"><span class="crate-name">tokio</span></a>
     </div>
   </details>
-  <details class="risk-list not-eval">
-    <summary>1 Not Evaluated Crate</summary>
+  <details id="risk-not-eval" class="risk-list not-eval">
+    <summary>1 Not Evaluated Crate<span class="sort-controls"><button type="button" class="sort-btn" onclick="sortCrates(this, 'alpha', event)" title="Sort A–Z">A–Z</button><button type="button" class="sort-btn active" onclick="sortCrates(this, 'score', event)" title="Sort by score">Score</button></span></summary>
     <div class="crate-names">
-      <a href="#crate-anyhow-1.0.75" onclick="selectCrate('crate-anyhow-1.0.75', this, event)" title="anyhow v1.0.75"><span class="crate-name">anyhow</span></a>
+      <a href="#crate-anyhow-1.0.75" onclick="selectCrate('crate-anyhow-1.0.75', this, event)" title="anyhow v1.0.75" data-name="anyhow" data-score="0"><span class="crate-name">anyhow</span></a>
     </div>
   </details>
   <div id="crate-list">
@@ -516,6 +529,34 @@ expression: output
       if (card) { card.style.display = ''; }
       const span = pill.querySelector('.crate-name') || pill;
       span.classList.add('active');
+    }
+    function sortCrates(btn, mode, event) {
+      event.preventDefault();
+      event.stopPropagation();
+      const list = btn.closest('.risk-list');
+      list.querySelectorAll('.sort-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const container = list.querySelector('.crate-names');
+      const links = Array.from(container.querySelectorAll('a'));
+      if (mode === 'alpha') {
+        links.sort((a, b) => (a.dataset.name || '').localeCompare(b.dataset.name || ''));
+      } else if (mode === 'score') {
+        links.sort((a, b) => parseFloat(a.dataset.score || '0') - parseFloat(b.dataset.score || '0'));
+      }
+      links.forEach(l => container.appendChild(l));
+    }
+    function toggleRiskList(risk) {
+      const lists = document.querySelectorAll('.risk-list');
+      if (risk === 'all') {
+        const allOpen = Array.from(lists).every(l => l.open);
+        lists.forEach(l => l.open = !allOpen);
+      } else {
+        const target = document.getElementById('risk-' + risk);
+        if (!target) return;
+        const wasOpen = target.open;
+        lists.forEach(l => l.open = false);
+        target.open = !wasOpen;
+      }
     }
     function switchTab(btn) {
       const tabs = btn.closest('.tabs');
