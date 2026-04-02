@@ -106,6 +106,7 @@ flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
 fs4 = { version = "0.13.1", default-features = false, features = ["sync"] }
 futures = { version = "0.3.32", default-features = false }
 futures-util = { version = "0.3.32", default-features = false }
+gix = { version = "0.78.0", default-features = false, features = ["blocking-http-transport-reqwest-native-tls"] }
 humantime-serde = { version = "1.1.1", default-features = false }
 indicatif = { version = "0.18.4", default-features = false }
 insta = { version = "1.46.3", default-features = false }
@@ -130,7 +131,6 @@ rustdoc-types-v54 = { package = "rustdoc-types", version = "0.54.0", default-fea
 rustdoc-types-v55 = { package = "rustdoc-types", version = "0.55.0", default-features = false }
 rustdoc-types-v56 = { package = "rustdoc-types", version = "0.56.0", default-features = false }
 rustdoc-types-v57 = { package = "rustdoc-types", version = "0.57.0", default-features = false }
-gix = { version = "0.78.0", default-features = false, features = ["blocking-http-transport-reqwest-native-tls"] }
 rustsec = { version = "0.32.0", default-features = false }
 seatbelt = { version = "0.4.0", default-features = false, features = ["retry", "timeout"] }
 semver = { version = "1.0.27", default-features = false, features = ["serde"] }
