@@ -106,6 +106,7 @@ flate2 = { version = "1.1.9", default-features = false, features = ["zlib-rs"] }
 fs4 = { version = "0.13.1", default-features = false, features = ["sync"] }
 futures = { version = "0.3.32", default-features = false }
 futures-util = { version = "0.3.32", default-features = false }
+gix = { version = "0.78.0", default-features = false, features = ["blocking-http-transport-reqwest-native-tls"] }
 humantime-serde = { version = "1.1.1", default-features = false }
 indicatif = { version = "0.18.4", default-features = false }
 insta = { version = "1.46.3", default-features = false }
@@ -119,7 +120,7 @@ pastey = { version = "0.2.1", default-features = false }
 percent-encoding = { version = "2.3.2", default-features = false, features = ["alloc"] }
 ra_ap_syntax = { version = "0.0.322", default-features = false }
 regex = { version = "1.12.3", default-features = false, features = ["std", "unicode-perl"] }
-reqwest = { version = "0.13.2", default-features = false, features = ["json", "rustls", "stream"] }
+reqwest = { version = "0.13.2", default-features = false, features = ["json", "native-tls", "stream"] }
 rust_xlsxwriter = { version = "0.94.0", default-features = false, features = ["zlib"] }
 rustc-hash = { version = "2.1.1", default-features = false, features = ["std"] }
 rustdoc-types-v50 = { package = "rustdoc-types", version = "0.50.0", default-features = false }
