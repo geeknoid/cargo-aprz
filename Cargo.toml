@@ -119,7 +119,7 @@ pastey = { version = "0.2.1", default-features = false }
 percent-encoding = { version = "2.3.2", default-features = false, features = ["alloc"] }
 ra_ap_syntax = { version = "0.0.322", default-features = false }
 regex = { version = "1.12.3", default-features = false, features = ["std", "unicode-perl"] }
-reqwest = { version = "0.13.2", default-features = false, features = ["json", "rustls", "stream"] }
+reqwest = { version = "0.13.2", default-features = false, features = ["json", "native-tls", "stream"] }
 rust_xlsxwriter = { version = "0.94.0", default-features = false, features = ["zlib"] }
 rustc-hash = { version = "2.1.1", default-features = false, features = ["std"] }
 rustdoc-types-v50 = { package = "rustdoc-types", version = "0.50.0", default-features = false }
@@ -130,6 +130,7 @@ rustdoc-types-v54 = { package = "rustdoc-types", version = "0.54.0", default-fea
 rustdoc-types-v55 = { package = "rustdoc-types", version = "0.55.0", default-features = false }
 rustdoc-types-v56 = { package = "rustdoc-types", version = "0.56.0", default-features = false }
 rustdoc-types-v57 = { package = "rustdoc-types", version = "0.57.0", default-features = false }
+gix = { version = "0.78.0", default-features = false, features = ["blocking-http-transport-reqwest-native-tls"] }
 rustsec = { version = "0.32.0", default-features = false }
 seatbelt = { version = "0.4.0", default-features = false, features = ["retry", "timeout"] }
 semver = { version = "1.0.27", default-features = false, features = ["serde"] }

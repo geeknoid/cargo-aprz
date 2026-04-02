@@ -56,7 +56,8 @@ rustdoc-types-v54.workspace = true
 rustdoc-types-v55.workspace = true
 rustdoc-types-v56.workspace = true
 rustdoc-types-v57.workspace = true
-rustsec = { workspace = true, features = ["git", "gix-reqwest"] }
+gix.workspace = true
+rustsec = { workspace = true, features = ["git"] }
 seatbelt.workspace = true
 semver.workspace = true
 serde.workspace = true
