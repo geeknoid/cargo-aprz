@@ -2,6 +2,7 @@ use super::{ReportableCrate, common};
 use crate::Result;
 use crate::expr::{ExpressionDisposition, Risk};
 use crate::metrics::MetricCategory;
+use crate::reports::common::ReportContext;
 use chrono::{DateTime, Local};
 use core::fmt::Write;
 use percent_encoding::{AsciiSet, CONTROLS, NON_ALPHANUMERIC, utf8_percent_encode};
@@ -87,8 +88,7 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], timestamp: DateTime<Local>
     };
 
     // Crate cards
-    let metrics_by_category = common::group_all_metrics_by_category(crates.iter().map(|c| c.metrics.as_slice()));
-    let crate_metric_maps = common::build_metric_lookup_maps(crates);
+    let ctx = ReportContext::new(crates);
     writeln!(writer, "  <div id=\"crate-list\">")?;
     for (crate_index, crate_info) in crates.iter().enumerate() {
         let anchor_id = crate_anchor_id(&crate_info.name, &crate_info.version.to_string());
@@ -102,10 +102,10 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], timestamp: DateTime<Local>
 
         // Collect which tabs this crate has
         let has_appraisal_tab = crate_info.appraisal.as_ref().is_some_and(|a| !a.expression_outcomes.is_empty());
-        let metric_map = &crate_metric_maps[crate_index];
+        let metric_map = &ctx.crate_metric_maps[crate_index];
         let mut crate_categories: Vec<MetricCategory> = Vec::new();
         for category in MetricCategory::iter() {
-            if metrics_by_category.get(&category).is_some_and(|cm| cm.iter().any(|&name| metric_map.contains_key(name))) {
+            if ctx.metrics_by_category.get(&category).is_some_and(|cm| cm.iter().any(|&name| metric_map.contains_key(name))) {
                 crate_categories.push(category);
             }
         }
@@ -138,7 +138,7 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], timestamp: DateTime<Local>
         for category in &crate_categories {
             let active = if panel_index == 0 { " active" } else { "" };
             writeln!(writer, "        <div class=\"tab-panel{active}\" id=\"{card_id}-{category}\">")?;
-            write_metrics_category(writer, *category, &metrics_by_category, metric_map)?;
+            write_metrics_category(writer, *category, &ctx.metrics_by_category, metric_map)?;
             writeln!(writer, "        </div>")?;
             panel_index += 1;
         }

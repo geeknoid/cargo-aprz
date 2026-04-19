@@ -40,15 +40,28 @@ impl Throttler {
     /// is dropped, the slot becomes available for another task.
     pub async fn acquire(&self) -> tokio::sync::OwnedSemaphorePermit {
         loop {
+            // Register the notification future *before* checking the condition
+            // to avoid lost wakeups (the standard Notify pattern).
+            let notified = self.resume.notified();
+
             if self.paused.load(Ordering::Acquire) {
-                self.resume.notified().await;
+                notified.await;
                 continue;
             }
 
-            return Arc::clone(&self.semaphore)
+            let permit = Arc::clone(&self.semaphore)
                 .acquire_owned()
                 .await
                 .expect("semaphore is never closed");
+
+            // Double-check: if a pause started while we were waiting for the
+            // semaphore, release the permit and wait for the pause to lift.
+            if self.paused.load(Ordering::Acquire) {
+                drop(permit);
+                continue;
+            }
+
+            return permit;
         }
     }
 
@@ -69,6 +82,7 @@ impl Throttler {
     /// will remain parked until the duration elapses. If a pause with a similar
     /// or longer duration is already active, this call is a no-op and returns `false`.
     /// Returns `true` only when a new pause is actually established.
+    #[expect(clippy::significant_drop_tightening, reason = "paused must be set inside the lock for correctness")]
     pub fn pause_for(self: &Arc<Self>, duration: Duration) -> bool {
         let new_resume_at = Instant::now() + duration;
 
@@ -78,30 +92,37 @@ impl Throttler {
                 return false; // an equivalent or longer pause is already active
             }
             *guard = Some(new_resume_at);
+            // Set paused inside the lock so that resume_at and paused are always
+            // consistent when observed together.
+            self.paused.store(true, Ordering::Release);
         }
-
-        self.paused.store(true, Ordering::Release);
         let this = Arc::clone(self);
         drop(tokio::spawn(async move {
             tokio::time::sleep(duration).await;
 
-            let should_resume = {
-                let mut guard = this.resume_at.lock().expect("lock not poisoned");
-                if guard.is_some_and(|t| Instant::now() >= t) {
-                    *guard = None;
-                    true
-                } else {
-                    false // a longer pause was scheduled after us
-                }
-            };
-
+            let should_resume = Self::try_resume(&this);
             if should_resume {
-                this.paused.store(false, Ordering::Release);
                 this.resume.notify_waiters();
             }
         }));
 
         true
+    }
+
+    /// Attempt to resume after a pause expires. Returns `true` if the pause was
+    /// lifted, `false` if a longer pause was scheduled after us.
+    #[expect(clippy::significant_drop_tightening, reason = "paused must be cleared inside the lock for correctness")]
+    fn try_resume(this: &Arc<Self>) -> bool {
+        let mut guard = this.resume_at.lock().expect("lock not poisoned");
+        if guard.is_some_and(|t| Instant::now() >= t) {
+            *guard = None;
+            // Clear paused inside the lock so that resume_at and paused
+            // are always consistent when observed together.
+            this.paused.store(false, Ordering::Release);
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -151,5 +172,61 @@ mod tests {
 
         // Should have waited at least ~200ms
         assert!(elapsed >= Duration::from_millis(150));
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore = "Miri cannot call CreateIoCompletionPort on Windows")]
+    async fn acquire_unblocks_after_short_pause() {
+        // Verifies that acquire() does not deadlock when a pause lifts
+        // (the register-before-check Notify pattern prevents lost wakeups).
+        let throttler = Throttler::new(1);
+
+        let _ = throttler.pause_for(Duration::from_millis(50));
+
+        let start = tokio::time::Instant::now();
+        let _permit = throttler.acquire().await;
+        let elapsed = start.elapsed();
+
+        // Must have waited for the pause, but not much longer
+        assert!(elapsed >= Duration::from_millis(30));
+        assert!(elapsed < Duration::from_secs(2), "acquire() should not deadlock");
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore = "Miri cannot call CreateIoCompletionPort on Windows")]
+    async fn no_work_dispatched_during_pause() {
+        // Verifies that acquire() does not return a permit until the pause has
+        // mostly elapsed.
+        let throttler = Throttler::new(5);
+
+        let _ = throttler.pause_for(Duration::from_millis(200));
+
+        let t = Arc::clone(&throttler);
+        let task = tokio::spawn(async move {
+            let start = tokio::time::Instant::now();
+            let _permit = t.acquire().await;
+            start.elapsed()
+        });
+
+        let elapsed = task.await.unwrap();
+        assert!(elapsed >= Duration::from_millis(150), "work should not run while paused");
+    }
+
+    #[tokio::test]
+    #[cfg_attr(miri, ignore = "Miri cannot call CreateIoCompletionPort on Windows")]
+    async fn longer_pause_wins() {
+        let throttler = Throttler::new(5);
+
+        // First pause: 100ms
+        assert!(throttler.pause_for(Duration::from_millis(100)));
+        // Second pause: 2000ms — must exceed first + MIN_PAUSE_EXTENSION (1s)
+        assert!(throttler.pause_for(Duration::from_millis(2000)));
+
+        let start = tokio::time::Instant::now();
+        let _permit = throttler.acquire().await;
+        let elapsed = start.elapsed();
+
+        // Should wait for the longer pause
+        assert!(elapsed >= Duration::from_millis(1500));
     }
 }

@@ -23,3 +23,49 @@ unused-allowed-license = "allow"
 ignore = [
     "RUSTSEC-2024-0436",  # paste - no longer maintained
 ]
+
+[bans]
+multiple-versions = "warn"
+skip = [
+    # Intentional: multi-version support for different rustdoc JSON formats
+    { crate = "rustdoc-types" },
+
+    # Transitive: directories -> redox_users pulls 0.2; rand ecosystem pulls 0.3/0.4
+    { crate = "getrandom" },
+
+    # Transitive: rowan (via ra_ap_syntax) pulls 0.14; indexmap 0.16; direct deps 0.17
+    { crate = "hashbrown" },
+
+    # Transitive: rowan (via ra_ap_syntax) pulls 1.x; cargo-aprz uses 2.x
+    { crate = "rustc-hash" },
+
+    # Transitive: cel-interpreter and jni (via rustls-platform-verifier) pull 1.x
+    { crate = "thiserror" },
+    { crate = "thiserror-impl" },
+
+    # Transitive: rustsec/cargo-lock pulls 0.9; cargo-aprz uses 1.1
+    { crate = "toml" },
+    { crate = "toml_datetime" },
+
+    # Transitive: gix-* (via rustsec) pulls 0.7; toml 1.1 uses 1.0
+    { crate = "winnow" },
+
+    # Transitive: multiple major versions across mmap-rs, rustls, tokio, etc.
+    { crate = "windows" },
+    { crate = "windows-sys" },
+    { crate = "windows-targets" },
+    { crate = "windows_x86_64_msvc" },
+    { crate = "windows_x86_64_gnu" },
+    { crate = "windows_x86_64_gnullvm" },
+    { crate = "windows_aarch64_msvc" },
+    { crate = "windows_aarch64_gnullvm" },
+    { crate = "windows_i686_gnu" },
+    { crate = "windows_i686_gnullvm" },
+    { crate = "windows_i686_msvc" },
+
+    # Transitive: getrandom chains
+    { crate = "r-efi" },
+
+    # Transitive: wasm toolchain crates
+    { crate = "wit-bindgen" },
+]

@@ -1,6 +1,7 @@
 //! Request tracking for monitoring outstanding HTTP requests.
 
 use super::progress::Progress;
+use core::fmt::Write;
 use core::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 use owo_colors::OwoColorize;
 use std::sync::Arc;
@@ -102,7 +103,7 @@ impl RequestTracker {
     /// Mark that multiple new requests have been issued for the given topic.
     pub fn add_requests(&self, topic: TrackedTopic, count: u64) {
         let counter = &self.counters[topic.index()];
-        let _ = counter.issued.fetch_add(count, Ordering::Relaxed);
+        let _ = counter.issued.fetch_add(count, Ordering::Release);
     }
 
     /// Mark that a request has completed for the given topic.
@@ -111,16 +112,16 @@ impl RequestTracker {
     /// issued requests have completed.
     pub fn complete_request(&self, topic: TrackedTopic) {
         let counter = &self.counters[topic.index()];
-        let completed = counter.completed.fetch_add(1, Ordering::Relaxed) + 1;
-        let issued = counter.issued.load(Ordering::Relaxed);
+        let completed = counter.completed.fetch_add(1, Ordering::AcqRel) + 1;
+        let issued = counter.issued.load(Ordering::Acquire);
         if completed >= issued && issued > 0 {
-            counter.status.store(TopicStatus::Done as u8, Ordering::Relaxed);
+            counter.status.store(TopicStatus::Done as u8, Ordering::Release);
         }
     }
 
     /// Set the visual status of a topic, controlling its color in the progress bar.
     pub fn set_topic_status(&self, topic: TrackedTopic, status: TopicStatus) {
-        self.counters[topic.index()].status.store(status as u8, Ordering::Relaxed);
+        self.counters[topic.index()].status.store(status as u8, Ordering::Release);
     }
 
     /// Compute current progress state from counters.
@@ -138,37 +139,38 @@ impl RequestTracker {
 
         let mut total_issued = 0u64;
         let mut total_completed = 0u64;
-        let mut parts = Vec::with_capacity(TrackedTopic::all().len());
+        let mut message = String::with_capacity(64);
 
         for topic in TrackedTopic::all() {
             let counter = &counters[topic.index()];
-            let issued = counter.issued.load(Ordering::Relaxed);
-            let completed = counter.completed.load(Ordering::Relaxed);
+            let issued = counter.issued.load(Ordering::Acquire);
+            let completed = counter.completed.load(Ordering::Acquire);
 
             if issued > 0 {
                 total_issued += issued;
                 total_completed += completed;
 
-                let text = format!("{completed}/{issued} {}", topic.name());
-                let status = counter.status.load(Ordering::Relaxed);
+                if !message.is_empty() {
+                    message.push_str(", ");
+                }
 
-                let styled = if use_colors && status == TopicStatus::Done as u8 {
-                    format!("{}", text.green())
+                let status = counter.status.load(Ordering::Acquire);
+
+                if use_colors && status == TopicStatus::Done as u8 {
+                    let text = format!("{completed}/{issued} {}", topic.name());
+                    let _ = write!(message, "{}", text.green());
                 } else if status == TopicStatus::Blocked as u8 && blink_on {
-                    format!("{}", text.yellow())
+                    let text = format!("{completed}/{issued} {}", topic.name());
+                    let _ = write!(message, "{}", text.yellow());
                 } else {
-                    text
-                };
-
-                parts.push(styled);
+                    let _ = write!(message, "{completed}/{issued} {}", topic.name());
+                }
             }
         }
 
-        let message = if parts.is_empty() {
-            "No requests".to_string()
-        } else {
-            parts.join(", ")
-        };
+        if message.is_empty() {
+            message.push_str("No requests");
+        }
 
         (total_issued, total_completed, message)
     }

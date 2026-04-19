@@ -98,8 +98,11 @@ impl Collector {
             return Ok(Vec::new().into_iter());
         }
 
-        // Deduplicate crate refs before processing
-        let crate_refs: Vec<_> = crate_refs.iter().cloned().collect::<HashSet<_>>().into_iter().collect();
+        // Deduplicate crate refs before processing, preserving insertion order
+        let crate_refs: Vec<_> = {
+            let mut seen = HashSet::default();
+            crate_refs.iter().filter(|r| seen.insert(*r)).cloned().collect()
+        };
 
         // Step 1: Start identification phase - query crates provider
         self.progress.set_phase("Identifying");
@@ -145,21 +148,21 @@ impl Collector {
             })
             .collect();
 
-        let all_queryable_specs: Vec<CrateSpec> = facts_map
+        let all_queryable_specs: Arc<[CrateSpec]> = facts_map
             .iter()
             .filter(|(_, facts)| facts.crates_data.is_found())
             .map(|(crate_spec, _)| crate_spec.clone())
             .collect();
 
         if !all_queryable_specs.is_empty() {
-            let (advisory_iter, docs_iter, hosting_iter, codebase_iter, coverage_iter) = tokio::join!(
-                self.advisories_provider.get_advisory_data(all_queryable_specs.clone()),
-                self.docs_provider.get_docs_data(all_queryable_specs.clone(), &request_tracker),
+            // Phase 1: Run advisory, hosting, codebase, and coverage providers in parallel.
+            let (advisory_iter, hosting_iter, codebase_iter, coverage_iter) = tokio::join!(
+                self.advisories_provider.get_advisory_data(Arc::clone(&all_queryable_specs)),
                 self.hosting_provider
-                    .get_hosting_data(all_queryable_specs.clone(), &request_tracker),
+                    .get_hosting_data(Arc::clone(&all_queryable_specs), &request_tracker),
                 self.codebase_provider
-                    .get_codebase_data(all_queryable_specs.clone(), &request_tracker),
-                self.coverage_provider.get_coverage_data(all_queryable_specs, &request_tracker),
+                    .get_codebase_data(Arc::clone(&all_queryable_specs), &request_tracker),
+                self.coverage_provider.get_coverage_data(Arc::clone(&all_queryable_specs), &request_tracker),
             );
 
             macro_rules! update_facts {
@@ -173,10 +176,14 @@ impl Collector {
             }
 
             update_facts!(advisory_iter, advisory_data);
-            update_facts!(docs_iter, docs_data);
             update_facts!(hosting_iter, hosting_data);
             update_facts!(codebase_iter, codebase_data);
             update_facts!(coverage_iter, coverage_data);
+
+            // Phase 2: Run docs provider separately so its memory-intensive rustdoc JSON
+            // parsing doesn't overlap with the codebase provider's source analysis.
+            let docs_iter = self.docs_provider.get_docs_data(all_queryable_specs, &request_tracker).await;
+            update_facts!(docs_iter, docs_data);
         }
 
         facts_map.into_values().collect()

@@ -49,10 +49,10 @@ impl Provider {
     /// Get documentation data for multiple crates
     pub async fn get_docs_data(
         &self,
-        crates: impl IntoIterator<Item = CrateSpec> + Send + 'static,
+        crates: Arc<[CrateSpec]>,
         tracker: &RequestTracker,
     ) -> impl Iterator<Item = (CrateSpec, ProviderResult<DocsData>)> {
-        join_all(crates.into_iter().map(|crate_spec| {
+        join_all(crates.iter().cloned().map(|crate_spec| {
             tracker.add_requests(TrackedTopic::Docs, 1);
 
             let provider = self.clone();
@@ -160,7 +160,7 @@ impl Provider {
     fn get_cache_filename(crate_spec: &CrateSpec) -> String {
         let safe_name = sanitize_path_component(crate_spec.name());
         let safe_version = sanitize_path_component(&crate_spec.version().to_string());
-        format!("{safe_name}@{safe_version}.json")
+        format!("{safe_name}@{safe_version}.bin")
     }
 
     /// Download logic for a single attempt.
@@ -222,10 +222,12 @@ impl Provider {
         let path = zst_path.as_ref();
         log::debug!(target: LOG_TARGET, "Opening .zst file for {crate_spec}: {}", path.display());
         let file = fs::File::open(path).into_app_err_with(|| format!("opening file '{}' for {crate_spec}", path.display()))?;
+        let reader = std::io::BufReader::new(file);
 
-        let decoder = zstd::Decoder::new(file).into_app_err_with(|| format!("creating zstd decoder for {crate_spec}"))?;
+        let json_bytes = zstd::stream::decode_all(reader)
+            .into_app_err_with(|| format!("decompressing docs for {crate_spec}"))?;
 
-        super::calc_metrics::calculate_docs_metrics(decoder, crate_spec)
+        super::calc_metrics::calculate_docs_metrics(&json_bytes, crate_spec)
     }
 }
 
@@ -246,7 +248,7 @@ mod tests {
     fn test_get_cache_filename() {
         let spec = test_crate_spec("tokio", "1.2.3");
         let filename = Provider::get_cache_filename(&spec);
-        assert_eq!(filename, "tokio@1.2.3.json");
+        assert_eq!(filename, "tokio@1.2.3.bin");
     }
 
     #[test]
@@ -254,7 +256,7 @@ mod tests {
         let spec = test_crate_spec("my-crate", "0.1.0-beta.1");
         let filename = Provider::get_cache_filename(&spec);
         assert!(filename.contains("my-crate"));
-        assert!(Path::new(&filename).extension().is_some_and(|ext| ext.eq_ignore_ascii_case("json")));
+        assert!(Path::new(&filename).extension().is_some_and(|ext| ext.eq_ignore_ascii_case("bin")));
     }
 
     #[test]

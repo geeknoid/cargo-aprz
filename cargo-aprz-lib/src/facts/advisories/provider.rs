@@ -31,7 +31,7 @@ impl Provider {
         progress: Arc<dyn Progress>,
     ) -> Result<Self> {
         let cache_dir = cache.dir();
-        let sync_filename = "last_synced.json";
+        let sync_filename = "last_synced.bin";
         let repo_path = cache_dir.join("repo");
 
         let needs_fetch = matches!(cache.load::<()>(sync_filename), CacheResult::Miss);
@@ -50,11 +50,15 @@ impl Provider {
 
     pub async fn get_advisory_data(
         &self,
-        crates: impl IntoIterator<Item = CrateSpec> + Send + 'static,
+        crates: Arc<[CrateSpec]>,
     ) -> impl Iterator<Item = (CrateSpec, ProviderResult<AdvisoryData>)> {
         let database = Arc::clone(&self.database);
 
-        tokio::task::spawn_blocking(move || scan_advisories(&database, crates))
+        tokio::task::spawn_blocking(move || {
+            scan_advisories(&database, crates.iter().cloned())
+                .collect::<Vec<_>>()
+                .into_iter()
+        })
             .await
             .expect("tasks must not panic")
     }

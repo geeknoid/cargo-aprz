@@ -58,10 +58,10 @@ impl Provider {
 
     pub async fn get_codebase_data(
         &self,
-        crates: impl IntoIterator<Item = CrateSpec> + Send + 'static,
+        crates: Arc<[CrateSpec]>,
         tracker: &RequestTracker,
     ) -> impl Iterator<Item = (CrateSpec, ProviderResult<CodebaseData>)> {
-        let repo_crates = crate_spec::by_repo(crates);
+        let repo_crates = crate_spec::by_repo(crates.iter().cloned());
 
         tracker.add_requests(TrackedTopic::Codebase, repo_crates.len() as u64);
 
@@ -515,7 +515,7 @@ impl Provider {
         let (safe_host, safe_owner, safe_repo) = Self::safe_repo_components(repo_spec);
         let safe_crate = sanitize_path_component(crate_name);
 
-        format!("analysis/{safe_host}/{safe_owner}/{safe_repo}/{safe_crate}.json")
+        format!("analysis/{safe_host}/{safe_owner}/{safe_repo}/{safe_crate}.bin")
     }
 
     /// Count transitive dependencies by walking the dependency graph
@@ -594,7 +594,7 @@ mod tests {
         assert!(filename.contains("github.com"));
         assert!(filename.contains("tokio-rs"));
         assert!(filename.contains("tokio"));
-        assert!(Path::new(&filename).extension().is_some_and(|ext| ext.eq_ignore_ascii_case("json")));
+        assert!(Path::new(&filename).extension().is_some_and(|ext| ext.eq_ignore_ascii_case("bin")));
     }
 
     #[test]

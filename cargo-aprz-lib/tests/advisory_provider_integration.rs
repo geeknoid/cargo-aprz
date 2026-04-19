@@ -71,7 +71,7 @@ async fn test_advisory_provider_known_vulnerable_crate() {
 
     // `hyper` 0.14.10 has known advisories (e.g. RUSTSEC-2021-0078, RUSTSEC-2021-0079)
     let crate_spec = make_spec("hyper", "0.14.10");
-    let results: Vec<(CrateSpec, ProviderResult<AdvisoryData>)> = provider.get_advisory_data(vec![crate_spec]).await.collect();
+    let results: Vec<(CrateSpec, ProviderResult<AdvisoryData>)> = provider.get_advisory_data(vec![crate_spec].into()).await.collect();
 
     assert_eq!(results.len(), 1);
     let (spec, result) = &results[0];
@@ -101,7 +101,7 @@ async fn test_advisory_provider_clean_crate() {
 
     // `itoa` is a tiny, well-maintained crate with no known advisories
     let crate_spec = make_spec("itoa", "1.0.14");
-    let results: Vec<(CrateSpec, ProviderResult<AdvisoryData>)> = provider.get_advisory_data(vec![crate_spec]).await.collect();
+    let results: Vec<(CrateSpec, ProviderResult<AdvisoryData>)> = provider.get_advisory_data(vec![crate_spec].into()).await.collect();
 
     assert_eq!(results.len(), 1);
     let (spec, result) = &results[0];
@@ -134,7 +134,7 @@ async fn test_advisory_provider_multiple_crates() {
         make_spec("hyper", "0.14.10"),
     ];
 
-    let results: Vec<(CrateSpec, ProviderResult<AdvisoryData>)> = provider.get_advisory_data(crates).await.collect();
+    let results: Vec<(CrateSpec, ProviderResult<AdvisoryData>)> = provider.get_advisory_data(crates.into()).await.collect();
 
     // Should get a result for each input crate
     assert_eq!(results.len(), 3);
@@ -156,7 +156,7 @@ async fn test_advisory_provider_nonexistent_crate() {
 
     // A crate that doesn't exist in crates.io or the advisory DB
     let crate_spec = make_spec("this-crate-definitely-does-not-exist-xyz-98765", "0.0.1");
-    let results: Vec<(CrateSpec, ProviderResult<AdvisoryData>)> = provider.get_advisory_data(vec![crate_spec]).await.collect();
+    let results: Vec<(CrateSpec, ProviderResult<AdvisoryData>)> = provider.get_advisory_data(vec![crate_spec].into()).await.collect();
 
     assert_eq!(results.len(), 1);
     let (_, result) = &results[0];
@@ -185,7 +185,7 @@ async fn test_advisory_provider_empty_input() {
     let provider = shared_provider().await;
 
     assert!(
-        provider.get_advisory_data(vec![]).await.next().is_none(),
+        provider.get_advisory_data(vec![].into()).await.next().is_none(),
         "Empty input should produce empty output"
     );
 }
@@ -198,7 +198,7 @@ async fn test_advisory_provider_historical_vs_per_version() {
     // Use a very old version of a crate known to have had advisories fixed in later versions
     // `smallvec` 0.6.13 has RUSTSEC-2019-0009 and RUSTSEC-2019-0012
     let crate_spec = make_spec("smallvec", "0.6.13");
-    let results: Vec<(CrateSpec, ProviderResult<AdvisoryData>)> = provider.get_advisory_data(vec![crate_spec]).await.collect();
+    let results: Vec<(CrateSpec, ProviderResult<AdvisoryData>)> = provider.get_advisory_data(vec![crate_spec].into()).await.collect();
 
     assert_eq!(results.len(), 1);
     let (_, result) = &results[0];
@@ -240,7 +240,10 @@ async fn test_advisory_provider_cache_reuse() {
         .await
         .expect("First provider creation should succeed");
 
-    let results1: Vec<_> = provider1.get_advisory_data(vec![make_spec("hyper", "0.14.10")]).await.collect();
+    let results1: Vec<_> = provider1
+        .get_advisory_data(vec![make_spec("hyper", "0.14.10")].into())
+        .await
+        .collect();
 
     // Second creation should reuse the cached database (no download)
     let cache2 = Cache::new(temp_dir.path(), core::time::Duration::from_secs(365 * 24 * 3600), false);
@@ -248,7 +251,10 @@ async fn test_advisory_provider_cache_reuse() {
         .await
         .expect("Second provider creation with cache should succeed");
 
-    let results2: Vec<_> = provider2.get_advisory_data(vec![make_spec("hyper", "0.14.10")]).await.collect();
+    let results2: Vec<_> = provider2
+        .get_advisory_data(vec![make_spec("hyper", "0.14.10")].into())
+        .await
+        .collect();
 
     // Both should return the same advisory counts
     assert_eq!(results1.len(), results2.len());

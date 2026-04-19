@@ -1,5 +1,35 @@
 # cargo-aprz
 
+## 1.0.0 - 2026-04-19
+
+### Changed
+
+- Updated dependencies
+
+### Performance
+
+- Replace quadruple `Vec` clone of queryable specs with `Arc<[CrateSpec]>` sharing
+- Single-pass accumulation for time-windowed issue/PR age statistics
+- Single-pass ordered dedup of crate refs preserving insertion order
+- Switch cache serialization from JSON to MessagePack
+- Single-pass byte scan for CSV escaping
+- Pre-compute shared `ReportContext` across report format generators
+- Eliminate `Vec`+`join` allocation in progress callback
+- Accept `&RepoSpec` to avoid cloning on retry
+- Eliminate double-parse of rustdoc JSON: deserialize directly into typed struct
+  instead of going through an intermediate `serde_json::Value` tree, halving peak
+  memory per crate during docs analysis
+- Run docs provider sequentially after other providers to isolate its memory-intensive
+  rustdoc JSON parsing from the codebase provider's source analysis
+
+### Fixed
+
+- Fix throttler lost-wakeup race by registering `Notify` before checking pause state
+- Fix throttler pause leak where work could slip through during semaphore acquisition
+- Ensure throttler `paused` flag and `resume_at` are updated atomically under the mutex
+- Fix request tracker counter visibility by upgrading atomic orderings from `Relaxed`
+  to `Acquire`/`Release`
+
 ## 0.14.0 - 2026-03-06
 
 ### Fixed
