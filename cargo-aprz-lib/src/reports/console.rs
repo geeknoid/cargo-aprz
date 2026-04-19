@@ -65,7 +65,7 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], use_colors: bool, mode: &C
             continue;
         }
 
-        // Build lookup map for quick metric access
+        // Build per-crate lookup map for O(1) metric access
         let metric_map: HashMap<&str, &Metric> = crate_info.metrics.iter().map(|m| (m.name(), m)).collect();
 
         // Use common grouping function to get metric names by category
@@ -180,7 +180,7 @@ fn wrap_text(text: &str, width: usize, indent: usize) -> Vec<String> {
 mod tests {
     use super::*;
     use crate::expr::{Appraisal, ExpressionDisposition, ExpressionOutcome, Risk};
-    use crate::metrics::{MetricDef, MetricValue};
+    use crate::metrics::{Metric, MetricDef, MetricValue};
     use std::sync::Arc;
 
     static NAME_DEF: MetricDef = MetricDef {

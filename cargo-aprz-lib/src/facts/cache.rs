@@ -1,4 +1,4 @@
-//! A reusable cache backed by JSON files with TTL-aware loading.
+//! A reusable cache backed by `MessagePack` files with TTL-aware loading.
 //!
 //! [`Cache`] wraps a cache directory and TTL so that callers
 //! don't need to thread those values through every load/save call.
@@ -45,7 +45,7 @@ enum EnvelopePayload<T> {
     NoData(String),
 }
 
-/// A TTL-aware, directory-backed JSON cache.
+/// A TTL-aware, directory-backed `MessagePack` cache.
 #[derive(Debug, Clone)]
 pub struct Cache {
     dir: PathBuf,
@@ -91,7 +91,7 @@ impl Cache {
         };
 
         let reader = BufReader::new(file);
-        let envelope: Envelope<T> = match serde_json::from_reader(reader) {
+        let envelope: Envelope<T> = match rmp_serde::from_read(reader) {
             Ok(data) => data,
             Err(e) => {
                 log::debug!(target: LOG_TARGET, "Cache miss for {filename}: {e:#}");
@@ -147,7 +147,7 @@ impl Cache {
         self.write_envelope(filename, &envelope)
     }
 
-    /// Write an envelope to disk.
+    /// Write an envelope to disk as `MessagePack`.
     fn write_envelope<T: Serialize>(&self, filename: &str, envelope: &Envelope<T>) -> Result<()> {
         let path = self.dir.join(filename);
 
@@ -158,12 +158,8 @@ impl Cache {
         let file = File::create(&path).into_app_err_with(|| format!("creating cache file '{}'", path.display()))?;
         let mut writer = BufWriter::new(file);
 
-        #[cfg(debug_assertions)]
-        let result = serde_json::to_writer_pretty(&mut writer, envelope);
-        #[cfg(not(debug_assertions))]
-        let result = serde_json::to_writer(&mut writer, envelope);
-
-        result.into_app_err_with(|| format!("writing cache file '{}'", path.display()))?;
+        rmp_serde::encode::write(&mut writer, envelope)
+            .into_app_err_with(|| format!("writing cache file '{}'", path.display()))?;
         writer
             .flush()
             .into_app_err_with(|| format!("flushing cache file '{}'", path.display()))?;
@@ -193,9 +189,9 @@ mod tests {
         let cache = make_cache(tmp.path(), 3600);
 
         let data = TestData { name: "test".to_string(), value: 42 };
-        cache.save("item.json", &data).unwrap();
+        cache.save("item.bin", &data).unwrap();
 
-        match cache.load::<TestData>("item.json") {
+        match cache.load::<TestData>("item.bin") {
             CacheResult::Data(loaded) => assert_eq!(loaded, data),
             other => panic!("expected Data, got {other:?}"),
         }
@@ -207,9 +203,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let cache = make_cache(tmp.path(), 3600);
 
-        cache.save_no_data("missing.json", "not found").unwrap();
+        cache.save_no_data("missing.bin", "not found").unwrap();
 
-        match cache.load::<TestData>("missing.json") {
+        match cache.load::<TestData>("missing.bin") {
             CacheResult::NoData(reason) => assert_eq!(reason, "not found"),
             other => panic!("expected NoData, got {other:?}"),
         }
@@ -221,17 +217,17 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let cache = make_cache(tmp.path(), 3600);
 
-        assert!(matches!(cache.load::<TestData>("nope.json"), CacheResult::Miss));
+        assert!(matches!(cache.load::<TestData>("nope.bin"), CacheResult::Miss));
     }
 
     #[test]
     #[cfg_attr(miri, ignore = "Miri cannot call GetTempPathW")]
-    fn load_invalid_json() {
+    fn load_invalid_data() {
         let tmp = tempfile::tempdir().unwrap();
-        fs::write(tmp.path().join("bad.json"), "not valid json").unwrap();
+        fs::write(tmp.path().join("bad.bin"), "not valid msgpack").unwrap();
         let cache = make_cache(tmp.path(), 3600);
 
-        assert!(matches!(cache.load::<TestData>("bad.json"), CacheResult::Miss));
+        assert!(matches!(cache.load::<TestData>("bad.bin"), CacheResult::Miss));
     }
 
     #[test]
@@ -245,12 +241,12 @@ mod tests {
             timestamp: old_time,
             payload: EnvelopePayload::Data(TestData { name: "old".to_string(), value: 1 }),
         };
-        let path = tmp.path().join("old.json");
+        let path = tmp.path().join("old.bin");
         let file = File::create(&path).unwrap();
-        serde_json::to_writer(file, &envelope).unwrap();
+        rmp_serde::encode::write(&mut BufWriter::new(file), &envelope).unwrap();
 
         let cache = make_cache(tmp.path(), 3600);
-        assert!(matches!(cache.load::<TestData>("old.json"), CacheResult::Miss));
+        assert!(matches!(cache.load::<TestData>("old.bin"), CacheResult::Miss));
     }
 
     #[test]
@@ -263,12 +259,12 @@ mod tests {
             timestamp: future_time,
             payload: EnvelopePayload::Data(TestData { name: "future".to_string(), value: 1 }),
         };
-        let path = tmp.path().join("future.json");
+        let path = tmp.path().join("future.bin");
         let file = File::create(&path).unwrap();
-        serde_json::to_writer(file, &envelope).unwrap();
+        rmp_serde::encode::write(&mut BufWriter::new(file), &envelope).unwrap();
 
         let cache = make_cache(tmp.path(), 3600);
-        match cache.load::<TestData>("future.json") {
+        match cache.load::<TestData>("future.bin") {
             CacheResult::Data(d) => assert_eq!(d.name, "future"),
             other => panic!("expected Data, got {other:?}"),
         }
@@ -282,9 +278,9 @@ mod tests {
 
         let data = TestData { name: "ignored".to_string(), value: 1 };
         // Save via a non-ignoring cache so the file actually exists
-        make_cache(tmp.path(), 3600).save("item.json", &data).unwrap();
+        make_cache(tmp.path(), 3600).save("item.bin", &data).unwrap();
 
-        assert!(matches!(cache.load::<TestData>("item.json"), CacheResult::Miss));
+        assert!(matches!(cache.load::<TestData>("item.bin"), CacheResult::Miss));
     }
 
     #[test]
@@ -294,9 +290,9 @@ mod tests {
         let cache = make_cache(tmp.path(), 3600);
 
         let data = TestData { name: "nested".to_string(), value: 123 };
-        cache.save("sub/dir/item.json", &data).unwrap();
+        cache.save("sub/dir/item.bin", &data).unwrap();
 
-        match cache.load::<TestData>("sub/dir/item.json") {
+        match cache.load::<TestData>("sub/dir/item.bin") {
             CacheResult::Data(loaded) => assert_eq!(loaded, data),
             other => panic!("expected Data, got {other:?}"),
         }
@@ -308,10 +304,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let cache = make_cache(tmp.path(), 3600);
 
-        cache.save("item.json", &TestData { name: "first".to_string(), value: 1 }).unwrap();
-        cache.save("item.json", &TestData { name: "second".to_string(), value: 2 }).unwrap();
+        cache.save("item.bin", &TestData { name: "first".to_string(), value: 1 }).unwrap();
+        cache.save("item.bin", &TestData { name: "second".to_string(), value: 2 }).unwrap();
 
-        match cache.load::<TestData>("item.json") {
+        match cache.load::<TestData>("item.bin") {
             CacheResult::Data(loaded) => assert_eq!(loaded.name, "second"),
             other => panic!("expected Data, got {other:?}"),
         }
@@ -329,12 +325,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let cache = make_cache(tmp.path(), 3600);
 
-        cache.save_no_data("item.json", "originally missing").unwrap();
-        assert!(matches!(cache.load::<TestData>("item.json"), CacheResult::NoData(r) if r == "originally missing"));
+        cache.save_no_data("item.bin", "originally missing").unwrap();
+        assert!(matches!(cache.load::<TestData>("item.bin"), CacheResult::NoData(r) if r == "originally missing"));
 
         let data = TestData { name: "now available".to_string(), value: 99 };
-        cache.save("item.json", &data).unwrap();
-        match cache.load::<TestData>("item.json") {
+        cache.save("item.bin", &data).unwrap();
+        match cache.load::<TestData>("item.bin") {
             CacheResult::Data(loaded) => assert_eq!(loaded, data),
             other => panic!("expected Data, got {other:?}"),
         }
@@ -351,11 +347,11 @@ mod tests {
             timestamp: old_time,
             payload: EnvelopePayload::Data(TestData { name: "boundary".to_string(), value: 1 }),
         };
-        let path = tmp.path().join("boundary.json");
+        let path = tmp.path().join("boundary.bin");
         let file = File::create(&path).unwrap();
-        serde_json::to_writer(file, &envelope).unwrap();
+        rmp_serde::encode::write(&mut BufWriter::new(file), &envelope).unwrap();
 
         let cache = make_cache(tmp.path(), ttl_seconds.cast_unsigned());
-        assert!(matches!(cache.load::<TestData>("boundary.json"), CacheResult::Miss));
+        assert!(matches!(cache.load::<TestData>("boundary.bin"), CacheResult::Miss));
     }
 }

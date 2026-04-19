@@ -46,6 +46,7 @@ percent-encoding.workspace = true
 ra_ap_syntax.workspace = true
 regex.workspace = true
 reqwest.workspace = true
+rmp-serde.workspace = true
 rust_xlsxwriter.workspace = true
 rustc-hash.workspace = true
 rustdoc-types-v50.workspace = true

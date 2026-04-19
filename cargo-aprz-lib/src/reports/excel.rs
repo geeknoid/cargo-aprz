@@ -2,12 +2,18 @@ use super::{ReportableCrate, common};
 use crate::Result;
 use crate::expr::{Appraisal, Risk};
 use crate::metrics::{MetricCategory, MetricValue};
+use crate::reports::common::ReportContext;
 use rust_xlsxwriter::{Color, DocProperties, Format, FormatAlign, Workbook};
 use std::io::Write;
 use strum::IntoEnumIterator;
 
-#[expect(unused_results, reason = "rust_xlsxwriter methods return &mut Worksheet for chaining")]
 pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<()> {
+    let ctx = ReportContext::new(crates);
+    generate_with_context(crates, &ctx, writer)
+}
+
+#[expect(unused_results, reason = "rust_xlsxwriter methods return &mut Worksheet for chaining")]
+fn generate_with_context<W: Write>(crates: &[ReportableCrate], ctx: &ReportContext<'_>, writer: &mut W) -> Result<()> {
     let mut workbook = Workbook::new();
 
     // Set document properties
@@ -46,12 +52,6 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<
     // Freeze the first column (metric names) and first row (headers)
     worksheet.set_freeze_panes(1, 1)?;
 
-    // Build per-crate metric lookup maps for O(1) access in the inner loop
-    let crate_metric_maps = common::build_metric_lookup_maps(crates);
-
-    // Group metrics by category across all crates
-    let metrics_by_category = common::group_all_metrics_by_category(crates.iter().map(|c| c.metrics.as_slice()));
-
     // Write metrics as rows, grouped by category
     let mut row = 1;
 
@@ -86,7 +86,7 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<
 
     // Write metrics grouped by category
     for category in MetricCategory::iter() {
-        if let Some(category_metric_names) = metrics_by_category.get(&category) {
+        if let Some(category_metric_names) = ctx.metrics_by_category.get(&category) {
             // Write category header (uppercase and bold with background color)
             worksheet.write_string_with_format(row, 0, category.as_uppercase_str(), &category_format)?;
 
@@ -103,7 +103,7 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<
                 worksheet.write_string(row, 0, metric_name)?;
 
                 // Write values for each crate
-                for (col_idx, metric_map) in crate_metric_maps.iter().enumerate() {
+                for (col_idx, metric_map) in ctx.crate_metric_maps.iter().enumerate() {
                     if let Some(metric) = metric_map.get(metric_name)
                         && let Some(ref value) = metric.value
                     {

@@ -68,7 +68,8 @@ async fn test_docs_provider_with_fixture() {
     // Fetch docs data
     let progress = Arc::new(NoOpProgress) as Arc<dyn Progress>;
     let tracker = RequestTracker::new(&progress);
-    let results: Vec<(CrateSpec, ProviderResult<DocsData>)> = provider.get_docs_data(vec![crate_spec.clone()], &tracker).await.collect();
+    let results: Vec<(CrateSpec, ProviderResult<DocsData>)> =
+        provider.get_docs_data(vec![crate_spec.clone()].into(), &tracker).await.collect();
 
     // Verify results
     assert_eq!(results.len(), 1);
@@ -123,7 +124,7 @@ async fn test_docs_provider_not_found() {
     // Fetch docs data
     let progress = Arc::new(NoOpProgress) as Arc<dyn Progress>;
     let tracker = RequestTracker::new(&progress);
-    let results: Vec<(CrateSpec, ProviderResult<DocsData>)> = provider.get_docs_data(vec![crate_spec], &tracker).await.collect();
+    let results: Vec<(CrateSpec, ProviderResult<DocsData>)> = provider.get_docs_data(vec![crate_spec].into(), &tracker).await.collect();
 
     // Verify results
     assert_eq!(results.len(), 1);
@@ -155,7 +156,7 @@ async fn test_docs_provider_uses_cache() {
     // Pre-populate cache with sentinel data
     let cached_data = make_sentinel_docs_data();
     let pre_cache = Cache::new(temp_dir.path(), core::time::Duration::MAX, false);
-    pre_cache.save("anyhow@1.0.100.json", &cached_data).expect("write cache");
+    pre_cache.save("anyhow@1.0.100.bin", &cached_data).expect("write cache");
 
     // Create provider with ignore_cached=false and no mock server (would fail if it tried to fetch)
     let mock_server = MockServer::start().await;
@@ -165,7 +166,7 @@ async fn test_docs_provider_uses_cache() {
     let crate_spec = CrateSpec::from_arcs(Arc::from("anyhow"), Arc::new(Version::parse("1.0.100").unwrap()));
     let progress = Arc::new(NoOpProgress) as Arc<dyn Progress>;
     let tracker = RequestTracker::new(&progress);
-    let results: Vec<_> = provider.get_docs_data(vec![crate_spec], &tracker).await.collect();
+    let results: Vec<_> = provider.get_docs_data(vec![crate_spec].into(), &tracker).await.collect();
 
     assert_eq!(results.len(), 1);
     match &results[0].1 {
@@ -194,7 +195,7 @@ async fn test_docs_provider_ignore_cached_bypasses_cache() {
     // Pre-populate cache with sentinel data
     let cached_data = make_sentinel_docs_data();
     let pre_cache = Cache::new(temp_dir.path(), core::time::Duration::MAX, false);
-    pre_cache.save("anyhow@1.0.100.json", &cached_data).expect("write cache");
+    pre_cache.save("anyhow@1.0.100.bin", &cached_data).expect("write cache");
 
     // Set up mock server with real fixture
     let zst_data = fs::read(FIXTURE_PATH).expect("Failed to read fixture file");
@@ -216,7 +217,7 @@ async fn test_docs_provider_ignore_cached_bypasses_cache() {
     let crate_spec = CrateSpec::from_arcs(Arc::from("anyhow"), Arc::new(Version::parse("1.0.100").unwrap()));
     let progress = Arc::new(NoOpProgress) as Arc<dyn Progress>;
     let tracker = RequestTracker::new(&progress);
-    let results: Vec<_> = provider.get_docs_data(vec![crate_spec], &tracker).await.collect();
+    let results: Vec<_> = provider.get_docs_data(vec![crate_spec].into(), &tracker).await.collect();
 
     assert_eq!(results.len(), 1);
     match &results[0].1 {

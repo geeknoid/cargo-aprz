@@ -76,7 +76,7 @@ macro_rules! unwrap_repo_result {
             HostingApiResult::Success(data, rate_limit) => (data, rate_limit),
             HostingApiResult::RateLimited(rate_limit) => {
                 return RepoData {
-                    repo_spec: $repo_spec,
+                    repo_spec: $repo_spec.clone(),
                     result: ProviderResult::Error(Arc::new(ohno::app_err!("rate limited"))),
                     rate_limit: Some(rate_limit),
                     is_rate_limited: true,
@@ -88,7 +88,7 @@ macro_rules! unwrap_repo_result {
                     log::debug!(target: LOG_TARGET, "Could not save cache for '{}': {e:#}", $repo_spec);
                 }
                 return RepoData {
-                    repo_spec: $repo_spec,
+                    repo_spec: $repo_spec.clone(),
                     result: ProviderResult::Unavailable(reason.into()),
                     rate_limit,
                     is_rate_limited: false,
@@ -100,7 +100,7 @@ macro_rules! unwrap_repo_result {
                 )?
                 let error = Arc::new(e.enrich_with(|| format!("fetching {} for repository '{}'", $operation, $repo_spec)));
                 return RepoData {
-                    repo_spec: $repo_spec,
+                    repo_spec: $repo_spec.clone(),
                     result: ProviderResult::Error(error),
                     rate_limit,
                     is_rate_limited: false,
@@ -177,10 +177,10 @@ impl Provider {
 
     pub async fn get_hosting_data(
         &self,
-        crates: impl IntoIterator<Item = CrateSpec> + Send + 'static,
+        crates: Arc<[CrateSpec]>,
         tracker: &RequestTracker,
     ) -> impl Iterator<Item = (CrateSpec, ProviderResult<HostingData>)> {
-        let repo_to_crates = crate_spec::by_repo(crates);
+        let repo_to_crates = crate_spec::by_repo(crates.iter().cloned());
 
         // Group repos by host domain
         let mut repos_by_host: HashMap<&'static str, Vec<RepoSpec>> = crate::hash_map_with_capacity(SUPPORTED_HOSTS.len());
@@ -274,7 +274,7 @@ impl Provider {
     ) -> RepoData {
         loop {
             let _permit = self.throttler.acquire().await;
-            let result = self.fetch_hosting_data_for_repo(client, host, repo_spec.clone()).await;
+            let result = self.fetch_hosting_data_for_repo(client, host, &repo_spec).await;
 
             if result.is_rate_limited {
                 if let Some(rl) = &result.rate_limit {
@@ -345,14 +345,14 @@ impl Provider {
     }
 
     /// Fetch repository data for a single repository
-    async fn fetch_hosting_data_for_repo(&self, client: &Client, host: &Host, repo_spec: RepoSpec) -> RepoData {
+    async fn fetch_hosting_data_for_repo(&self, client: &Client, host: &Host, repo_spec: &RepoSpec) -> RepoData {
         let owner = repo_spec.owner();
         let repo = repo_spec.repo();
 
         let filename = Self::get_cache_filename(host.host_domain, owner, repo);
         match self.cache.load::<HostingData>(&filename) {
-            CacheResult::Data(data) => return RepoData::from_cache(repo_spec, ProviderResult::Found(data)),
-            CacheResult::NoData(reason) => return RepoData::from_cache(repo_spec, ProviderResult::Unavailable(reason.into())),
+            CacheResult::Data(data) => return RepoData::from_cache(repo_spec.clone(), ProviderResult::Found(data)),
+            CacheResult::NoData(reason) => return RepoData::from_cache(repo_spec.clone(), ProviderResult::Unavailable(reason.into())),
             CacheResult::Miss => {}
         }
 
@@ -360,7 +360,7 @@ impl Provider {
         // skip HTTP calls and signal rate-limited so the caller retries after the pause.
         if self.throttler.is_paused() {
             return RepoData {
-                repo_spec,
+                repo_spec: repo_spec.clone(),
                 result: ProviderResult::Error(Arc::new(ohno::app_err!("rate limited"))),
                 rate_limit: None,
                 is_rate_limited: true,
@@ -382,7 +382,7 @@ impl Provider {
         // primary rate limit info from the successful repo request.
         if self.throttler.is_paused() {
             return RepoData {
-                repo_spec,
+                repo_spec: repo_spec.clone(),
                 result: ProviderResult::Error(Arc::new(ohno::app_err!("rate limited"))),
                 rate_limit: None,
                 is_rate_limited: true,
@@ -438,7 +438,7 @@ impl Provider {
             Err(e) => ProviderResult::Error(Arc::new(e)),
         };
 
-        RepoData::success(repo_spec, result, rate_limit)
+        RepoData::success(repo_spec.clone(), result, rate_limit)
     }
 
     /// Get the cache filename for a specific repository
@@ -446,7 +446,7 @@ impl Provider {
         let safe_host = sanitize_path_component(host_domain);
         let safe_owner = sanitize_path_component(owner);
         let safe_repo = sanitize_path_component(repo);
-        format!("{safe_host}/{safe_owner}/{safe_repo}.json")
+        format!("{safe_host}/{safe_owner}/{safe_repo}.bin")
     }
 
     /// Construct API URL for a repository with optional path suffix
@@ -534,14 +534,20 @@ impl Provider {
 }
 
 /// Compute age statistics from an iterator of durations in seconds.
-#[expect(clippy::cast_precision_loss, reason = "acceptable for statistics")]
-#[expect(clippy::cast_possible_truncation, reason = "acceptable for day conversion")]
-#[expect(clippy::cast_sign_loss, reason = "values are filtered to be non-negative")]
 fn compute_age_stats(seconds_iter: impl Iterator<Item = f64>) -> AgeStats {
     let mut seconds: Vec<f64> = seconds_iter
         .filter(|&s| s.is_finite() && s >= 0.0)
         .collect();
 
+    compute_age_stats_from_vec(&mut seconds)
+}
+
+/// Compute age statistics from a pre-collected vector of durations in seconds.
+/// Sorts the vector in place to compute percentiles.
+#[expect(clippy::cast_precision_loss, reason = "acceptable for statistics")]
+#[expect(clippy::cast_possible_truncation, reason = "acceptable for day conversion")]
+#[expect(clippy::cast_sign_loss, reason = "values are filtered to be non-negative")]
+fn compute_age_stats_from_vec(seconds: &mut [f64]) -> AgeStats {
     if seconds.is_empty() {
         return AgeStats::default();
     }
@@ -550,10 +556,10 @@ fn compute_age_stats(seconds_iter: impl Iterator<Item = f64>) -> AgeStats {
 
     AgeStats {
         avg: (seconds.iter().sum::<f64>() / seconds.len() as f64 / SECONDS_PER_DAY) as u32,
-        p50: (percentile(&seconds, 50.0) / SECONDS_PER_DAY) as u32,
-        p75: (percentile(&seconds, 75.0) / SECONDS_PER_DAY) as u32,
-        p90: (percentile(&seconds, 90.0) / SECONDS_PER_DAY) as u32,
-        p95: (percentile(&seconds, 95.0) / SECONDS_PER_DAY) as u32,
+        p50: (percentile(seconds, 50.0) / SECONDS_PER_DAY) as u32,
+        p75: (percentile(seconds, 75.0) / SECONDS_PER_DAY) as u32,
+        p90: (percentile(seconds, 90.0) / SECONDS_PER_DAY) as u32,
+        p95: (percentile(seconds, 95.0) / SECONDS_PER_DAY) as u32,
     }
 }
 
@@ -622,6 +628,7 @@ fn increment_window(stats: &mut TimeWindowStats, ts: DateTime<Utc>, cutoff_90: D
 
 /// Compute all issue and PR statistics from the raw issue list.
 #[expect(clippy::cast_precision_loss, reason = "acceptable for duration")]
+#[expect(clippy::too_many_lines, reason = "single-pass accumulation is inherently sequential")]
 fn compute_all_stats(all_issues: &[Issue], now: DateTime<Utc>) -> IssueAndPullStats {
     let cutoff_90 = now - chrono::Duration::days(90);
     let cutoff_180 = now - chrono::Duration::days(180);
@@ -671,42 +678,66 @@ fn compute_all_stats(all_issues: &[Issue], now: DateTime<Utc>) -> IssueAndPullSt
     let open_issue_age = compute_age_stats(open_issues.iter().map(|i| (now - i.created_at).num_seconds() as f64));
     let open_pr_age = compute_age_stats(open_pulls.iter().map(|i| (now - i.created_at).num_seconds() as f64));
 
-    // Closed issue ages (issues without closed_at are excluded via closed_age_seconds)
-    let closed_issue_age = compute_age_stats(closed_issues.iter().copied().filter_map(closed_age_seconds));
-    let closed_issue_age_last_90_days = compute_age_stats(
-        closed_issues.iter().copied()
-            .filter(|i| i.closed_at.is_some_and(|t| t >= cutoff_90))
-            .filter_map(closed_age_seconds),
-    );
-    let closed_issue_age_last_180_days = compute_age_stats(
-        closed_issues.iter().copied()
-            .filter(|i| i.closed_at.is_some_and(|t| t >= cutoff_180))
-            .filter_map(closed_age_seconds),
-    );
-    let closed_issue_age_last_365_days = compute_age_stats(
-        closed_issues.iter().copied()
-            .filter(|i| i.closed_at.is_some_and(|t| t >= cutoff_365))
-            .filter_map(closed_age_seconds),
-    );
+    // Closed issue ages: single-pass accumulation into time-window buckets.
+    // Since 90-day ⊂ 180-day ⊂ 365-day ⊂ all, each item is pushed to all applicable buckets.
+    let mut closed_issue_ages_all = Vec::new();
+    let mut closed_issue_ages_365 = Vec::new();
+    let mut closed_issue_ages_180 = Vec::new();
+    let mut closed_issue_ages_90 = Vec::new();
 
-    // Merged PR ages (chaining iterators avoids intermediate Vec allocation)
-    let all_pulls = || open_pulls.iter().chain(closed_pulls.iter()).copied();
-    let merged_pr_age = compute_age_stats(all_pulls().filter_map(merged_pr_age_seconds));
-    let merged_pr_age_last_90_days = compute_age_stats(
-        all_pulls()
-            .filter(|i| i.pull_request.as_ref().and_then(|p| p.merged_at).is_some_and(|t| t >= cutoff_90))
-            .filter_map(merged_pr_age_seconds),
-    );
-    let merged_pr_age_last_180_days = compute_age_stats(
-        all_pulls()
-            .filter(|i| i.pull_request.as_ref().and_then(|p| p.merged_at).is_some_and(|t| t >= cutoff_180))
-            .filter_map(merged_pr_age_seconds),
-    );
-    let merged_pr_age_last_365_days = compute_age_stats(
-        all_pulls()
-            .filter(|i| i.pull_request.as_ref().and_then(|p| p.merged_at).is_some_and(|t| t >= cutoff_365))
-            .filter_map(merged_pr_age_seconds),
-    );
+    for issue in &closed_issues {
+        if let Some(age) = closed_age_seconds(issue)
+            && age.is_finite() && age >= 0.0
+        {
+            closed_issue_ages_all.push(age);
+            if let Some(closed_at) = issue.closed_at
+                && closed_at >= cutoff_365
+            {
+                closed_issue_ages_365.push(age);
+                if closed_at >= cutoff_180 {
+                    closed_issue_ages_180.push(age);
+                    if closed_at >= cutoff_90 {
+                        closed_issue_ages_90.push(age);
+                    }
+                }
+            }
+        }
+    }
+
+    let closed_issue_age = compute_age_stats_from_vec(&mut closed_issue_ages_all);
+    let closed_issue_age_last_365_days = compute_age_stats_from_vec(&mut closed_issue_ages_365);
+    let closed_issue_age_last_180_days = compute_age_stats_from_vec(&mut closed_issue_ages_180);
+    let closed_issue_age_last_90_days = compute_age_stats_from_vec(&mut closed_issue_ages_90);
+
+    // Merged PR ages: single-pass accumulation across open and closed pulls
+    let mut merged_pr_ages_all = Vec::new();
+    let mut merged_pr_ages_365 = Vec::new();
+    let mut merged_pr_ages_180 = Vec::new();
+    let mut merged_pr_ages_90 = Vec::new();
+
+    for issue in open_pulls.iter().chain(closed_pulls.iter()) {
+        if let Some(age) = merged_pr_age_seconds(issue)
+            && age.is_finite() && age >= 0.0
+        {
+            merged_pr_ages_all.push(age);
+            if let Some(merged_at) = issue.pull_request.as_ref().and_then(|p| p.merged_at)
+                && merged_at >= cutoff_365
+            {
+                merged_pr_ages_365.push(age);
+                if merged_at >= cutoff_180 {
+                    merged_pr_ages_180.push(age);
+                    if merged_at >= cutoff_90 {
+                        merged_pr_ages_90.push(age);
+                    }
+                }
+            }
+        }
+    }
+
+    let merged_pr_age = compute_age_stats_from_vec(&mut merged_pr_ages_all);
+    let merged_pr_age_last_365_days = compute_age_stats_from_vec(&mut merged_pr_ages_365);
+    let merged_pr_age_last_180_days = compute_age_stats_from_vec(&mut merged_pr_ages_180);
+    let merged_pr_age_last_90_days = compute_age_stats_from_vec(&mut merged_pr_ages_90);
 
     IssueAndPullStats {
         request_count: 0,
@@ -800,7 +831,7 @@ mod tests {
 
         assert!(filename.contains("github.com"));
         assert!(filename.contains("tokio-rs"));
-        assert!(filename.contains("tokio.json"));
+        assert!(filename.contains("tokio.bin"));
     }
 
     #[test]
@@ -809,7 +840,7 @@ mod tests {
 
         // Path traversal should be sanitized
         assert!(!filename.contains("../"));
-        assert!(filename.contains("passwd.json"));
+        assert!(filename.contains("passwd.bin"));
     }
 
     #[test]

@@ -153,6 +153,28 @@ pub fn group_metrics_by_category<'a>(metrics: &'a [Metric]) -> HashMap<MetricCat
     metrics_by_category
 }
 
+/// Pre-computed data shared across report generators.
+///
+/// Computing metric groupings and lookup maps is O(crates × metrics).
+/// When generating multiple report formats, building this once avoids
+/// redundant work.
+pub struct ReportContext<'a> {
+    /// Metrics grouped by category across all crates (union of metric names).
+    pub metrics_by_category: HashMap<MetricCategory, Vec<&'static str>>,
+    /// Per-crate metric lookup maps for O(1) access by metric name.
+    pub crate_metric_maps: Vec<HashMap<&'a str, &'a Metric>>,
+}
+
+impl<'a> ReportContext<'a> {
+    /// Build a report context from a slice of reportable crates.
+    pub fn new(crates: &'a [super::ReportableCrate]) -> Self {
+        Self {
+            metrics_by_category: group_all_metrics_by_category(crates.iter().map(|c| c.metrics.as_slice())),
+            crate_metric_maps: build_metric_lookup_maps(crates),
+        }
+    }
+}
+
 /// Group metrics by category across multiple crates, producing the union of all metric names.
 ///
 /// Each metric name appears at most once per category, in the order first encountered.

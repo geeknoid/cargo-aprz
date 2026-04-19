@@ -46,10 +46,10 @@ impl Provider {
 
     pub async fn get_coverage_data(
         &self,
-        crates: impl IntoIterator<Item = CrateSpec> + Send + 'static,
+        crates: Arc<[CrateSpec]>,
         tracker: &RequestTracker,
     ) -> impl Iterator<Item = (CrateSpec, ProviderResult<CoverageData>)> {
-        let mut repo_to_crates = crate_spec::by_repo(crates);
+        let mut repo_to_crates = crate_spec::by_repo(crates.iter().cloned());
 
         tracker.add_requests(TrackedTopic::Coverage, repo_to_crates.len() as u64);
 
@@ -128,7 +128,7 @@ impl Provider {
         let safe_host = sanitize_path_component(repo_spec.host());
         let safe_owner = sanitize_path_component(repo_spec.owner());
         let safe_repo = sanitize_path_component(repo_spec.repo());
-        format!("{safe_host}/{safe_owner}/{safe_repo}.json")
+        format!("{safe_host}/{safe_owner}/{safe_repo}.bin")
     }
 
     /// Fetch codebase coverage data from codecov.io
@@ -219,7 +219,7 @@ mod tests {
         let filename = Provider::get_cache_filename(&repo_spec);
         assert!(filename.contains("github.com"));
         assert!(filename.contains("tokio-rs"));
-        assert!(filename.contains("tokio.json"));
+        assert!(filename.contains("tokio.bin"));
     }
 
     #[test]

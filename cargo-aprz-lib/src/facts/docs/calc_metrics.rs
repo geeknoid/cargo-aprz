@@ -10,7 +10,6 @@ use crate::facts::CrateSpec;
 use ohno::{IntoAppError, app_err};
 use regex::Regex;
 use crate::HashMap;
-use std::io::Read;
 use std::sync::LazyLock;
 
 /// Pattern to match intra-doc code links: [`text`]
@@ -34,11 +33,11 @@ macro_rules! generate_version_support {
         pastey::paste! {
             /// Parse and calculate metrics for rustdoc JSON format version
             #[doc = $version]
-            fn [<calculate_metrics_v $version>](json_value: serde_json::Value, crate_spec: &CrateSpec) -> Result<DocsMetrics> {
+            fn [<calculate_metrics_v $version>](json_bytes: &[u8], crate_spec: &CrateSpec) -> Result<DocsMetrics> {
                 use $module as rustdoc_types;
 
                 log::debug!(target: LOG_TARGET, "Parsing rustdoc JSON v{} for {crate_spec}", $version);
-                let krate: rustdoc_types::Crate = serde_json::from_value(json_value)
+                let krate: rustdoc_types::Crate = serde_json::from_slice(json_bytes)
                     .into_app_err_with(|| format!("parsing rustdoc JSON v{} structure for {crate_spec}", $version))?;
 
                 let index_len = krate.index.len();
@@ -84,27 +83,31 @@ generate_version_support!("55", rustdoc_types_v55);
 generate_version_support!("56", rustdoc_types_v56);
 generate_version_support!("57", rustdoc_types_v57);
 
-pub fn calculate_docs_metrics(reader: impl Read, crate_spec: &CrateSpec) -> Result<DocsData> {
-    log::debug!(target: LOG_TARGET, "Parsing rustdoc JSON for {crate_spec}");
-    let json_value: serde_json::Value =
-        serde_json::from_reader(reader).into_app_err_with(|| format!("parsing JSON for {crate_spec}"))?;
+/// Helper struct to peek at just the `format_version` field without parsing the entire document.
+#[derive(serde::Deserialize)]
+struct FormatVersionPeek {
+    format_version: u64,
+}
 
-    let format_version = json_value
-        .get("format_version")
-        .and_then(serde_json::Value::as_u64)
-        .ok_or_else(|| app_err!("rustdoc JSON for {crate_spec} is missing 'format_version' field"))?;
+pub fn calculate_docs_metrics(json_bytes: &[u8], crate_spec: &CrateSpec) -> Result<DocsData> {
+    log::debug!(target: LOG_TARGET, "Parsing rustdoc JSON for {crate_spec}");
+
+    // Peek at format_version with a minimal deserialization pass (ignores all other fields)
+    let format_version = serde_json::from_slice::<FormatVersionPeek>(json_bytes)
+        .map(|v| v.format_version)
+        .into_app_err_with(|| format!("reading format_version from rustdoc JSON for {crate_spec}"))?;
 
     log::debug!(target: LOG_TARGET, "Found rustdoc JSON format version {format_version} for {crate_spec}");
 
     let metrics = match format_version {
-        50 => calculate_metrics_v50(json_value, crate_spec)?,
-        51 => calculate_metrics_v51(json_value, crate_spec)?,
-        52 => calculate_metrics_v52(json_value, crate_spec)?,
-        53 => calculate_metrics_v53(json_value, crate_spec)?,
-        54 => calculate_metrics_v54(json_value, crate_spec)?,
-        55 => calculate_metrics_v55(json_value, crate_spec)?,
-        56 => calculate_metrics_v56(json_value, crate_spec)?,
-        57 => calculate_metrics_v57(json_value, crate_spec)?,
+        50 => calculate_metrics_v50(json_bytes, crate_spec)?,
+        51 => calculate_metrics_v51(json_bytes, crate_spec)?,
+        52 => calculate_metrics_v52(json_bytes, crate_spec)?,
+        53 => calculate_metrics_v53(json_bytes, crate_spec)?,
+        54 => calculate_metrics_v54(json_bytes, crate_spec)?,
+        55 => calculate_metrics_v55(json_bytes, crate_spec)?,
+        56 => calculate_metrics_v56(json_bytes, crate_spec)?,
+        57 => calculate_metrics_v57(json_bytes, crate_spec)?,
         _ => {
             log::debug!(target: LOG_TARGET, "Unsupported rustdoc JSON format version {format_version} for {crate_spec}");
             return Err(app_err!(

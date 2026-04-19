@@ -71,8 +71,10 @@ async fn test_coverage_provider_with_fixture() {
     // Fetch coverage data
     let progress = Arc::new(NoOpProgress) as Arc<dyn Progress>;
     let tracker = RequestTracker::new(&progress);
-    let results: Vec<(CrateSpec, ProviderResult<CoverageData>)> =
-        provider.get_coverage_data(vec![crate_spec.clone()], &tracker).await.collect();
+    let results: Vec<(CrateSpec, ProviderResult<CoverageData>)> = provider
+        .get_coverage_data(vec![crate_spec.clone()].into(), &tracker)
+        .await
+        .collect();
 
     // Verify results
     assert_eq!(results.len(), 1);
@@ -146,7 +148,8 @@ async fn test_coverage_provider_not_found_main() {
     // Fetch coverage data
     let progress = Arc::new(NoOpProgress) as Arc<dyn Progress>;
     let tracker = RequestTracker::new(&progress);
-    let results: Vec<(CrateSpec, ProviderResult<CoverageData>)> = provider.get_coverage_data(vec![crate_spec], &tracker).await.collect();
+    let results: Vec<(CrateSpec, ProviderResult<CoverageData>)> =
+        provider.get_coverage_data(vec![crate_spec].into(), &tracker).await.collect();
 
     // Verify results
     assert_eq!(results.len(), 1);
@@ -199,7 +202,8 @@ async fn test_coverage_provider_unknown_coverage() {
     // Fetch coverage data
     let progress = Arc::new(NoOpProgress) as Arc<dyn Progress>;
     let tracker = RequestTracker::new(&progress);
-    let results: Vec<(CrateSpec, ProviderResult<CoverageData>)> = provider.get_coverage_data(vec![crate_spec], &tracker).await.collect();
+    let results: Vec<(CrateSpec, ProviderResult<CoverageData>)> =
+        provider.get_coverage_data(vec![crate_spec].into(), &tracker).await.collect();
 
     // Verify results - should be Unavailable when coverage is unknown
     assert_eq!(results.len(), 1);
@@ -217,7 +221,7 @@ async fn test_coverage_provider_uses_cache() {
         code_coverage_percentage: 42.0,
     };
     let pre_cache = Cache::new(temp_dir.path(), core::time::Duration::from_secs(365 * 24 * 3600), false);
-    pre_cache.save("github.com/test/repo.json", &cached_data).expect("write cache");
+    pre_cache.save("github.com/test/repo.bin", &cached_data).expect("write cache");
 
     // Create provider with ignore_cached=false and long TTL
     let mock_server = MockServer::start().await;
@@ -230,7 +234,7 @@ async fn test_coverage_provider_uses_cache() {
 
     let progress = Arc::new(NoOpProgress) as Arc<dyn Progress>;
     let tracker = RequestTracker::new(&progress);
-    let results: Vec<_> = provider.get_coverage_data(vec![crate_spec], &tracker).await.collect();
+    let results: Vec<_> = provider.get_coverage_data(vec![crate_spec].into(), &tracker).await.collect();
 
     assert_eq!(results.len(), 1);
     match &results[0].1 {
@@ -264,7 +268,7 @@ async fn test_coverage_provider_ignore_cached_bypasses_cache() {
     };
     let pre_cache = Cache::new(temp_dir.path(), core::time::Duration::from_secs(365 * 24 * 3600), false);
     pre_cache
-        .save("github.com/microsoft/oxidizer.json", &cached_data)
+        .save("github.com/microsoft/oxidizer.bin", &cached_data)
         .expect("write cache");
 
     // Set up mock server with real fixture
@@ -290,7 +294,7 @@ async fn test_coverage_provider_ignore_cached_bypasses_cache() {
 
     let progress = Arc::new(NoOpProgress) as Arc<dyn Progress>;
     let tracker = RequestTracker::new(&progress);
-    let results: Vec<_> = provider.get_coverage_data(vec![crate_spec], &tracker).await.collect();
+    let results: Vec<_> = provider.get_coverage_data(vec![crate_spec].into(), &tracker).await.collect();
 
     assert_eq!(results.len(), 1);
     match &results[0].1 {

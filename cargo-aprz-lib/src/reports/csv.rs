@@ -1,17 +1,17 @@
 use super::{ReportableCrate, common};
 use crate::Result;
 use crate::metrics::MetricCategory;
+use crate::reports::common::ReportContext;
 use core::fmt::Write;
 use std::borrow::Cow;
 use strum::IntoEnumIterator;
 
 pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<()> {
-    // Group metrics by category across all crates
-    let metrics_by_category = common::group_all_metrics_by_category(crates.iter().map(|c| c.metrics.as_slice()));
+    let ctx = ReportContext::new(crates);
+    generate_with_context(crates, &ctx, writer)
+}
 
-    // Build per-crate metric lookup maps for O(1) access
-    let crate_metric_maps = common::build_metric_lookup_maps(crates);
-
+fn generate_with_context<W: Write>(crates: &[ReportableCrate], ctx: &ReportContext<'_>, writer: &mut W) -> Result<()> {
     // Write header row
     write!(writer, "Metric")?;
     for crate_info in crates {
@@ -49,13 +49,13 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<
     // Write metrics grouped by category
     let mut metric_buf = String::new();
     for category in MetricCategory::iter() {
-        if let Some(category_metrics) = metrics_by_category.get(&category) {
+        if let Some(category_metrics) = ctx.metrics_by_category.get(&category) {
             // Write each metric in this category
             for metric_name in category_metrics {
                 write!(writer, "{}", escape_csv(metric_name))?;
 
                 // Write values for each crate
-                for metric_map in &crate_metric_maps {
+                for metric_map in &ctx.crate_metric_maps {
                     if let Some(metric) = metric_map.get(metric_name)
                         && let Some(ref value) = metric.value
                     {
@@ -79,9 +79,20 @@ pub fn generate<W: Write>(crates: &[ReportableCrate], writer: &mut W) -> Result<
 /// Wraps the value in double quotes if it contains commas, newlines, or double quotes.
 /// Internal double quotes are doubled per the RFC.
 fn escape_csv(s: &str) -> Cow<'_, str> {
-    if s.contains('"') {
+    let mut needs_quoting = false;
+    let mut has_quote = false;
+    for &b in s.as_bytes() {
+        if b == b'"' {
+            has_quote = true;
+            needs_quoting = true;
+        } else if matches!(b, b',' | b'\n' | b'\r') {
+            needs_quoting = true;
+        }
+    }
+
+    if has_quote {
         Cow::Owned(format!("\"{}\"", s.replace('"', "\"\"")))
-    } else if s.contains(',') || s.contains('\n') || s.contains('\r') {
+    } else if needs_quoting {
         Cow::Owned(format!("\"{s}\""))
     } else {
         Cow::Borrowed(s)
